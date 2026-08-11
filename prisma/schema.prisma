@@ -1,0 +1,322 @@
+// ─────────────────────────────────────────────────────────
+// CompanyOS AI — Prisma Schema
+// PostgreSQL. Supabase Auth owns the `auth.users` table;
+// `User` here is our app-side profile keyed by the Supabase
+// auth user id (a UUID we mirror, never generate ourselves).
+// ─────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ───────────── Enums ─────────────
+
+enum RoleKey {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVOKED
+}
+
+enum BusinessSize {
+  SOLO
+  MICRO // 2-10
+  SMALL // 11-50
+  MEDIUM // 51-250
+  LARGE // 251-1000
+  ENTERPRISE // 1000+
+}
+
+enum ActivityCategory {
+  AUTH
+  ORGANIZATION
+  COMPANY
+  TEAM
+  MEMBER
+  BILLING
+  SETTINGS
+  SECURITY
+  SYSTEM
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  INVITATION
+  BILLING
+  SYSTEM
+}
+
+// ───────────── Core identity ─────────────
+
+model User {
+  id            String   @id @db.Uuid // mirrors Supabase auth.users.id
+  email         String   @unique
+  fullName      String?
+  avatarUrl     String?
+  jobTitle      String?
+  phone         String?
+  timezone      String   @default("UTC")
+  locale        String   @default("en")
+  emailVerified Boolean  @default(false)
+  lastLoginAt   DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships      Membership[]
+  sentInvitations  Invitation[]     @relation("InvitationInviter")
+  activityLogs     ActivityLog[]
+  notifications    Notification[]
+  ownedOrgs        Organization[]   @relation("OrganizationOwner")
+
+  @@map("users")
+}
+
+// ───────────── Organizations (tenants) ─────────────
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  ownerId   String   @db.Uuid
+  owner     User     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company       Company?
+  teams         Team[]
+  memberships   Membership[]
+  invitations   Invitation[]
+  roles         Role[]
+  settings      OrganizationSettings?
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+
+  @@index([ownerId])
+  @@map("organizations")
+}
+
+model OrganizationSettings {
+  id                    String   @id @default(uuid()) @db.Uuid
+  organizationId        String   @unique @db.Uuid
+  organization          Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  brandVoice            String?
+  defaultTimezone        String   @default("UTC")
+  allowPublicSignup      Boolean  @default(false)
+  requireTwoFactor       Boolean  @default(false)
+  notifyOnNewMember      Boolean  @default(true)
+  notifyOnBillingEvents  Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@map("organization_settings")
+}
+
+// ───────────── Company profile (onboarding) ─────────────
+
+model Company {
+  id              String       @id @default(uuid()) @db.Uuid
+  organizationId  String       @unique @db.Uuid
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name            String
+  industry        String
+  website         String?
+  businessSize    BusinessSize
+  mission         String?      @db.Text
+  vision          String?      @db.Text
+  goals           String[]     @default([])
+  products        String[]     @default([])
+  services        String[]     @default([])
+  targetCustomers String?      @db.Text
+  competitors     String[]     @default([])
+  brandVoice      String?      @db.Text
+  employeeCount   Int?
+
+  documents       CompanyDocument[]
+
+  onboardingStep      Int      @default(0)
+  onboardingCompleted Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("companies")
+}
+
+model CompanyDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @db.Uuid
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fileName   String
+  fileUrl    String
+  fileType   String
+  fileSizeKb Int
+  uploadedAt DateTime @default(now())
+
+  @@index([companyId])
+  @@map("company_documents")
+}
+
+// ───────────── Teams & membership ─────────────
+
+model Team {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  members TeamMember[]
+
+  @@index([organizationId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id           String   @id @default(uuid()) @db.Uuid
+  teamId       String   @db.Uuid
+  team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  membershipId String   @db.Uuid
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  joinedAt     DateTime @default(now())
+
+  @@unique([teamId, membershipId])
+  @@map("team_members")
+}
+
+// Membership links a User to an Organization with a Role (many-to-many + role)
+model Membership {
+  id             String       @id @default(uuid()) @db.Uuid
+  userId         String       @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roleId         String       @db.Uuid
+  role           Role         @relation(fields: [roleId], references: [id])
+  isActive       Boolean      @default(true)
+  joinedAt       DateTime     @default(now())
+
+  teams TeamMember[]
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+// ───────────── RBAC ─────────────
+
+model Role {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  key            RoleKey
+  name           String
+  description    String?
+  isSystem       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  memberships Membership[]
+  permissions RolePermission[]
+
+  @@unique([organizationId, key])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique // e.g. "company.edit", "billing.manage"
+  description String
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ───────────── Invitations ─────────────
+
+model Invitation {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  roleKey        RoleKey           @default(MEMBER)
+  status         InvitationStatus  @default(PENDING)
+  token          String            @unique
+  invitedById    String            @db.Uuid
+  invitedBy      User              @relation("InvitationInviter", fields: [invitedById], references: [id])
+  expiresAt      DateTime
+  createdAt      DateTime          @default(now())
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitations")
+}
+
+// ───────────── Activity & notifications ─────────────
+
+model ActivityLog {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actorId        String?           @db.Uuid
+  actor          User?             @relation(fields: [actorId], references: [id])
+  category       ActivityCategory
+  action         String // e.g. "member.invited", "company.updated"
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime          @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([actorId])
+  @@map("activity_logs")
+}
+
+model Notification {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String           @db.Uuid
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           NotificationType @default(INFO)
+  title          String
+  message        String
+  isRead         Boolean          @default(false)
+  actionUrl      String?
+  createdAt      DateTime         @default(now())
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}

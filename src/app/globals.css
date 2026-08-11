@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 98%;
+    --foreground: 222 47% 8%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 8%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 8%;
+
+    --primary: 244 82% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --signal: 244 82% 60%;
+    --signal-foreground: 0 0% 100%;
+
+    --secondary: 220 16% 93%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 16% 93%;
+    --muted-foreground: 222 15% 40%;
+
+    --accent: 220 16% 93%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 88%;
+    --input: 220 13% 88%;
+    --ring: 244 82% 60%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 224 47% 6%;
+    --foreground: 210 20% 96%;
+
+    --card: 224 38% 9%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 224 38% 9%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: 244 88% 68%;
+    --primary-foreground: 224 47% 8%;
+
+    --signal: 244 88% 68%;
+    --signal-foreground: 224 47% 8%;
+
+    --secondary: 224 28% 14%;
+    --secondary-foreground: 210 20% 96%;
+
+    --muted: 224 28% 14%;
+    --muted-foreground: 220 10% 65%;
+
+    --accent: 224 28% 16%;
+    --accent-foreground: 210 20% 96%;
+
+    --destructive: 0 63% 45%;
+    --destructive-foreground: 210 20% 96%;
+
+    --border: 224 24% 18%;
+    --input: 224 24% 18%;
+    --ring: 244 88% 68%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    @apply bg-signal/25;
+  }
+}
+
+@layer utilities {
+  /* Signature background: a faint, slowly-pulsing grid that reads as a
+     system readout — used sparingly, once per page, in the hero. */
+  .signal-grid {
+    background-image:
+      linear-gradient(hsl(var(--foreground) / 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--foreground) / 0.06) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 40%, transparent 100%);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
