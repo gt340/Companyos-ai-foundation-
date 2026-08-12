@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     create: { id: user.id, email: user.email ?? "" },
   });
 
-  let membership = await prisma.membership.findFirst({
+  const membership = await prisma.membership.findFirst({
     where: { userId: user.id, isActive: true },
   });
 
