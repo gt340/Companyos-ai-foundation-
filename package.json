@@ -18,9 +18,9 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "next": "15.1.9",
-    "react": "19.0.3",
-    "react-dom": "19.0.3",
+    "next": "15.1.12",
+    "react": "19.0.4",
+    "react-dom": "19.0.4",
     "@prisma/client": "5.22.0",
     "@supabase/ssr": "0.5.2",
     "@supabase/supabase-js": "2.46.1",
@@ -55,7 +55,7 @@
     "autoprefixer": "10.4.20",
     "prisma": "5.22.0",
     "eslint": "8.57.1",
-    "eslint-config-next": "15.1.9",
+    "eslint-config-next": "15.1.12",
     "eslint-config-prettier": "9.1.0",
     "@typescript-eslint/eslint-plugin": "8.18.0",
     "@typescript-eslint/parser": "8.18.0",
