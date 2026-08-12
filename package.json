@@ -18,7 +18,7 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "next": "15.0.3",
+    "next": "15.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "@prisma/client": "5.22.0",
@@ -55,7 +55,7 @@
     "autoprefixer": "10.4.20",
     "prisma": "5.22.0",
     "eslint": "8.57.1",
-    "eslint-config-next": "15.0.3",
+    "eslint-config-next": "15.1.6",
     "prettier": "3.3.3",
     "prettier-plugin-tailwindcss": "0.6.8",
     "tsx": "4.19.2"
