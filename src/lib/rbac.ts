@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import type { RoleKey } from "@prisma/client";
+import type { Prisma, RoleKey } from "@prisma/client";
 
 /**
  * Central permission catalog attached to each system role at
@@ -38,13 +38,15 @@ export const ROLE_PERMISSIONS: Record<RoleKey, string[]> = {
  * newly created organization and wires each to its permission set.
  * Run inside the same transaction as organization creation.
  */
-export async function createDefaultRoles(organizationId: string) {
+type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient;
+
+export async function createDefaultRoles(organizationId: string, client: PrismaClientOrTx = prisma) {
   const roleKeys = Object.keys(ROLE_PERMISSIONS) as RoleKey[];
-  const permissions = await prisma.permission.findMany();
+  const permissions = await client.permission.findMany();
   const permissionByKey = new Map(permissions.map((p) => [p.key, p.id]));
 
   for (const key of roleKeys) {
-    const role = await prisma.role.create({
+    const role = await client.role.create({
       data: {
         organizationId,
         key,
@@ -58,7 +60,7 @@ export async function createDefaultRoles(organizationId: string) {
       .filter((id): id is string => Boolean(id));
 
     if (permissionIds.length > 0) {
-      await prisma.rolePermission.createMany({
+      await client.rolePermission.createMany({
         data: permissionIds.map((permissionId) => ({ roleId: role.id, permissionId })),
       });
     }

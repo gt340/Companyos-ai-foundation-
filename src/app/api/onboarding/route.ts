@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       },
     });
 
-    await createDefaultRoles(org.id);
+    await createDefaultRoles(org.id, tx);
     const ownerRole = await tx.role.findFirstOrThrow({ where: { organizationId: org.id, key: "OWNER" } });
     await tx.membership.create({ data: { userId: user.id, organizationId: org.id, roleId: ownerRole.id } });
 
