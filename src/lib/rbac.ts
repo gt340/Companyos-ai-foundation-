@@ -97,7 +97,5 @@ export async function getPrimaryMembership(userId: string) {
       organization: { include: { settings: true } },
       role: { include: { permissions: { include: { permission: true } } } },
     },
-  });
-                                    }
-  
+  });   
 }
