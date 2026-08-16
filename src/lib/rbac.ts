@@ -83,4 +83,21 @@ export async function getMembership(userId: string, organizationId: string) {
     where: { userId, organizationId, isActive: true },
     include: { role: { include: { permissions: { include: { permission: true } } } } },
   });
+/**
+ * Resolves the user's primary organization membership — the first
+ * active one, ordered by join date. Multi-organization switching
+ * isn't built yet, so every "current workspace" route relies on this
+ * until a workspace-selection mechanism exists.
+ */
+export async function getPrimaryMembership(userId: string) {
+  return prisma.membership.findFirst({
+    where: { userId, isActive: true },
+    orderBy: { joinedAt: "asc" },
+    include: {
+      organization: { include: { settings: true } },
+      role: { include: { permissions: { include: { permission: true } } } },
+    },
+  });
+                                    }
+  
 }
