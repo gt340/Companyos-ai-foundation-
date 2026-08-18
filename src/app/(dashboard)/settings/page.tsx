@@ -248,7 +248,9 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
-        </TabsContent><TabsContent value="security">
+        </TabsContent>
+
+        <TabsContent value="security">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Security</CardTitle>
@@ -393,7 +395,14 @@ function InviteMemberDialog({
 
         {inviteUrl ? (
           <div className="flex items-center gap-2 rounded-md border border-border bg-muted p-3">
-            <code className="flex-1 truncate text-xs">{inviteUrl}</code>
+            <a
+              href={inviteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 truncate text-xs text-signal underline"
+            >
+              {inviteUrl}
+            </a>
             <Button
               size="icon"
               variant="ghost"
@@ -442,4 +451,4 @@ function InviteMemberDialog({
       </DialogContent>
     </Dialog>
   );
-                  }
+  }
