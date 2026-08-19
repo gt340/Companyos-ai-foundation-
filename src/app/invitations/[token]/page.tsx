@@ -88,7 +88,7 @@ export default async function InvitationPage({ params }: { params: Promise<{ tok
                       <Link href={`/login?redirectTo=/invitations/${token}`}>Sign in</Link>
                     </Button>
                     <Button variant="outline" className="w-full" asChild>
-                      <Link href="/register">Create an account</Link>
+                      <Link href={`/register?redirectTo=/invitations/${token}`}>Create an account</Link>
                     </Button>
                   </div>
                 ) : user.email?.toLowerCase() !== invitation.email.toLowerCase() ? (
