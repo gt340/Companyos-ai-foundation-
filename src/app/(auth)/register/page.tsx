@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { registerSchema } from "@/lib/validations/auth";
@@ -11,9 +11,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 
-export default function RegisterPage() {
+// useSearchParams() opts the tree into client-side rendering during
+// prerender, so Next.js requires it inside a Suspense boundary — the
+// default export below provides that; this component holds the form.
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
+
+  // When arriving via an invitation link (e.g. /register?redirectTo=/invitations/abc123),
+  // send the confirmed user back to that invite instead of onboarding.
+  const redirectTo = searchParams.get("redirectTo") || "/onboarding";
 
   const [values, setValues] = React.useState({
     fullName: "",
@@ -46,7 +54,7 @@ export default function RegisterPage() {
       password: result.data.password,
       options: {
         data: { full_name: result.data.fullName },
-        emailRedirectTo: `${window.location.origin}/api/auth/callback?next=/onboarding`,
+        emailRedirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(redirectTo)}`,
       },
     });
 
@@ -151,3 +159,11 @@ export default function RegisterPage() {
     </div>
   );
 }
+
+export default function RegisterPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <RegisterForm />
+    </React.Suspense>
+  );
+      }
