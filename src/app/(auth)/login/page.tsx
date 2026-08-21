@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { GoogleSignInButton } from "@/components/auth/google-signin-button";
 
 function LoginForm() {
   const router = useRouter();
@@ -56,7 +57,17 @@ function LoginForm() {
       <h1 className="font-display text-xl font-semibold tracking-tight">Sign in</h1>
       <p className="mt-1 text-sm text-muted-foreground">Welcome back. Enter your details to continue.</p>
 
-      <form onSubmit={handleSubmit} noValidate className="mt-8 space-y-5">
+      <div className="mt-8">
+        <GoogleSignInButton redirectTo={searchParams.get("redirectTo") ?? undefined} />
+      </div>
+
+      <div className="my-6 flex items-center gap-3">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-xs text-muted-foreground">OR</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <Input
@@ -110,4 +121,4 @@ export default function LoginPage() {
       <LoginForm />
     </React.Suspense>
   );
-}
+            }
