@@ -59,11 +59,11 @@ function LoginForm() {
       <p className="mt-1 text-sm text-muted-foreground">Welcome back. Enter your details to continue.</p>
 
       <div className="mt-8">
-  <GoogleSignInButton redirectTo={...} />
-</div>
-<div className="mt-3">
-  <MicrosoftSignInButton redirectTo={...} />
-</div>
+        <GoogleSignInButton redirectTo={searchParams.get("redirectTo") ?? undefined} />
+      </div>
+      <div className="mt-3">
+        <MicrosoftSignInButton redirectTo={searchParams.get("redirectTo") ?? undefined} />
+      </div>
 
       <div className="my-6 flex items-center gap-3">
         <div className="h-px flex-1 bg-border" />
@@ -125,4 +125,4 @@ export default function LoginPage() {
       <LoginForm />
     </React.Suspense>
   );
-            }
+         }
