@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { GoogleSignInButton } from "@/components/auth/google-signin-button";
 import { MicrosoftSignInButton } from "@/components/auth/microsoft-signin-button";
 import { GitHubSignInButton } from "@/components/auth/github-signin-button";
+import { MagicLinkForm } from "@/components/auth/magic-link-form";
 
 function LoginForm() {
   const router = useRouter();
