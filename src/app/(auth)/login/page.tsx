@@ -27,6 +27,7 @@ function LoginForm() {
     }
   }, [searchParams, toast]);
 
+  const [mode, setMode] = React.useState<"password" | "magic">("password");
   const [values, setValues] = React.useState<LoginInput>({ email: "", password: "" });
   const [errors, setErrors] = React.useState<Partial<Record<keyof LoginInput, string>>>({});
   const [loading, setLoading] = React.useState(false);
@@ -83,43 +84,68 @@ function LoginForm() {
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <form onSubmit={handleSubmit} noValidate className="space-y-5">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            autoComplete="email"
-            value={values.email}
-            onChange={(e) => setValues((v) => ({ ...v, email: e.target.value }))}
-            aria-invalid={Boolean(errors.email)}
-          />
-          {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
-        </div>
+      <div className="mb-5 flex gap-1 rounded-lg bg-muted p-1 text-sm">
+        <button
+          type="button"
+          onClick={() => setMode("password")}
+          className={`flex-1 rounded-md py-1.5 font-medium transition ${
+            mode === "password" ? "bg-background shadow-sm" : "text-muted-foreground"
+          }`}
+        >
+          Password
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("magic")}
+          className={`flex-1 rounded-md py-1.5 font-medium transition ${
+            mode === "magic" ? "bg-background shadow-sm" : "text-muted-foreground"
+          }`}
+        >
+          Magic Link
+        </button>
+      </div>
 
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
-            <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground">
-              Forgot password?
-            </Link>
+      {mode === "password" ? (
+        <form onSubmit={handleSubmit} noValidate className="space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              value={values.email}
+              onChange={(e) => setValues((v) => ({ ...v, email: e.target.value }))}
+              aria-invalid={Boolean(errors.email)}
+            />
+            {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
           </div>
-          <Input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            value={values.password}
-            onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
-            aria-invalid={Boolean(errors.password)}
-          />
-          {errors.password && <p className="text-sm text-destructive">{errors.password}</p>}
-        </div>
 
-        <Button type="submit" variant="signal" className="w-full" disabled={loading}>
-          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-          Sign in
-        </Button>
-      </form>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password">Password</Label>
+              <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground">
+                Forgot password?
+              </Link>
+            </div>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={values.password}
+              onChange={(e) => setValues((v) => ({ ...v, password: e.target.value }))}
+              aria-invalid={Boolean(errors.password)}
+            />
+            {errors.password && <p className="text-sm text-destructive">{errors.password}</p>}
+          </div>
+
+          <Button type="submit" variant="signal" className="w-full" disabled={loading}>
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            Sign in
+          </Button>
+        </form>
+      ) : (
+        <MagicLinkForm redirectTo={searchParams.get("redirectTo") ?? undefined} />
+      )}
 
       <p className="mt-8 text-center text-sm text-muted-foreground">
         Don't have an account?{" "}
@@ -137,4 +163,4 @@ export default function LoginPage() {
       <LoginForm />
     </React.Suspense>
   );
-          }
+}
