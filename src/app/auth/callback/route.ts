@@ -41,7 +41,7 @@ export async function GET(request: Request) {
       await supabase.from('user_sessions').insert({
         userId: data.user.id,
         authSessionId: data.session.access_token.slice(0, 16),
-        loginMethod: 'google',
+        loginMethod: data.user.app_metadata?.provider ?? 'unknown',
         userAgent: request.headers.get('user-agent') ?? null,
       })
     }
