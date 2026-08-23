@@ -54,7 +54,7 @@ function RegisterForm() {
       password: result.data.password,
       options: {
         data: { full_name: result.data.fullName },
-        emailRedirectTo: `${window.location.origin}/api/auth/callback?next=${encodeURIComponent(redirectTo)}`,
+    emailRedirectTo: `${window.location.origin}/auth/callback?redirectTo=${encodeURIComponent(redirectTo)}`,
       },
     });
 
