@@ -41,9 +41,12 @@ export async function updateSession(request: NextRequest) {
     "/activity-logs",
   ];
   const isProtected = protectedPrefixes.some((p) => request.nextUrl.pathname.startsWith(p));
-  const isAuthRoute = ["/login", "/register", "/forgot-password", "/verify-email"].some((p) =>
+  const isAuthRoute = ["/login", "/register", "/forgot-password"].some((p) =>
     request.nextUrl.pathname.startsWith(p),
   );
+  const isVerifyEmailRoute = request.nextUrl.pathname.startsWith("/verify-email");
+
+  const isVerified = Boolean(user?.email_confirmed_at);
 
   if (!user && isProtected) {
     const url = request.nextUrl.clone();
@@ -52,7 +55,24 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthRoute) {
+  // Signed in but hasn't verified their email yet: keep them out of
+  // protected areas until they confirm, but let them stay on the
+  // verify-email page itself.
+  if (user && !isVerified && isProtected) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/verify-email";
+    return NextResponse.redirect(url);
+  }
+
+  if (user && isVerified && isAuthRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
+  // A verified user has no reason to sit on the verify-email page.
+  if (user && isVerified && isVerifyEmailRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
