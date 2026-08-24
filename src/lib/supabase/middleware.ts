@@ -1,10 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-/**
- * Refreshes the Supabase auth session on every matched request and
- * returns the (possibly redirected) response for middleware.ts to use.
- */
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -45,6 +41,7 @@ export async function updateSession(request: NextRequest) {
     request.nextUrl.pathname.startsWith(p),
   );
   const isVerifyEmailRoute = request.nextUrl.pathname.startsWith("/verify-email");
+  const isMfaChallengeRoute = request.nextUrl.pathname.startsWith("/mfa-challenge");
 
   const isVerified = Boolean(user?.email_confirmed_at);
 
@@ -55,13 +52,23 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Signed in but hasn't verified their email yet: keep them out of
-  // protected areas until they confirm, but let them stay on the
-  // verify-email page itself.
   if (user && !isVerified && isProtected) {
     const url = request.nextUrl.clone();
     url.pathname = "/verify-email";
     return NextResponse.redirect(url);
+  }
+
+  // Enforce the 2FA challenge: if this user has a verified TOTP factor but
+  // the current session hasn't completed it yet, keep them out of protected
+  // routes until they do — while still letting them reach the challenge page itself.
+  if (user && isVerified && isProtected) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/mfa-challenge";
+      url.searchParams.set("redirectTo", request.nextUrl.pathname);
+      return NextResponse.redirect(url);
+    }
   }
 
   if (user && isVerified && isAuthRoute) {
@@ -71,12 +78,23 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // A verified user has no reason to sit on the verify-email page.
   if (user && isVerified && isVerifyEmailRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Once fully verified (aal2 satisfied or not required), there's no reason
+  // to sit on the challenge page — send them where they meant to go.
+  if (user && isMfaChallengeRoute) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (!aal || aal.currentLevel === aal.nextLevel) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;
