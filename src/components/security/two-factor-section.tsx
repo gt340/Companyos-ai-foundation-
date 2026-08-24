@@ -24,6 +24,7 @@ export function TwoFactorSection() {
   // Enrollment flow state
   const [enrolling, setEnrolling] = React.useState(false)
   const [qrCode, setQrCode] = React.useState<string | null>(null)
+  const [secret, setSecret] = React.useState<string | null>(null)
   const [factorId, setFactorId] = React.useState<string | null>(null)
   const [verifyCode, setVerifyCode] = React.useState('')
   const [verifying, setVerifying] = React.useState(false)
@@ -54,7 +55,8 @@ export function TwoFactorSection() {
     }
     setFactorId(data.id)
     setQrCode(data.totp.qr_code)
-  }
+    setSecret(data.totp.secret) 
+   }
 
   async function confirmEnrollment() {
     if (!factorId || !verifyCode) return
