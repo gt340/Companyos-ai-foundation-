@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, MailCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -12,10 +13,10 @@ function ConfirmForm() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const [loading, setLoading] = React.useState(false);
+  const [expired, setExpired] = React.useState(false);
 
   const code = searchParams.get("code");
   const redirectTo = searchParams.get("redirectTo") || "/onboarding";
-  const [expired, setExpired] = React.useState(false);
 
   async function handleConfirm() {
     if (!code) return;
@@ -45,6 +46,11 @@ function ConfirmForm() {
         <p className="mt-2 text-sm text-muted-foreground">
           This link is missing required information. Please request a new confirmation email.
         </p>
+        <p className="mt-4 text-sm text-muted-foreground">
+          <Link href="/verify-email" className="font-medium text-foreground hover:text-signal">
+            Resend verification email
+          </Link>
+        </p>
       </div>
     );
   }
@@ -61,14 +67,15 @@ function ConfirmForm() {
       <Button variant="signal" className="mt-6 w-full" onClick={handleConfirm} disabled={loading}>
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
         Confirm my account
-        {expired && (
+      </Button>
+
+      {expired && (
         <p className="mt-4 text-sm text-muted-foreground">
           <Link href="/verify-email" className="font-medium text-foreground hover:text-signal">
             Resend verification email
           </Link>
         </p>
       )}
-      </Button>
     </div>
   );
 }
@@ -79,4 +86,4 @@ export default function ConfirmPage() {
       <ConfirmForm />
     </React.Suspense>
   );
-}
+      }
