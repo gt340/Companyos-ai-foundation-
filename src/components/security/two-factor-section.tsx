@@ -21,7 +21,6 @@ export function TwoFactorSection() {
   const [factors, setFactors] = React.useState<Factor[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  // Enrollment flow state
   const [enrolling, setEnrolling] = React.useState(false)
   const [qrCode, setQrCode] = React.useState<string | null>(null)
   const [secret, setSecret] = React.useState<string | null>(null)
@@ -55,8 +54,8 @@ export function TwoFactorSection() {
     }
     setFactorId(data.id)
     setQrCode(data.totp.qr_code)
-    setSecret(data.totp.secret) 
-   }
+    setSecret(data.totp.secret)
+  }
 
   async function confirmEnrollment() {
     if (!factorId || !verifyCode) return
@@ -81,12 +80,12 @@ export function TwoFactorSection() {
       return
     }
 
-    // Generate backup codes server-side and store them hashed
     const res = await fetch('/api/security/backup-codes', { method: 'POST' })
     const body = await res.json().catch(() => null)
 
     setVerifying(false)
     setQrCode(null)
+    setSecret(null)
     setVerifyCode('')
     setEnrolling(false)
     setBackupCodes(body?.codes ?? null)
@@ -151,6 +150,27 @@ export function TwoFactorSection() {
         ) : enrolling && qrCode ? (
           <div className="space-y-4">
             <img src={qrCode} alt="Scan with your authenticator app" className="h-40 w-40" />
+
+            <div className="space-y-2 rounded-md border border-border bg-muted p-3">
+              <p className="text-xs font-medium text-muted-foreground">Can't scan? Enter this code manually</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 truncate font-mono text-sm">{secret}</code>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  type="button"
+                  onClick={() => {
+                    if (secret) {
+                      navigator.clipboard.writeText(secret)
+                      toast({ title: 'Copied' })
+                    }
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="totp-code">Enter the 6-digit code from your app</Label>
               <Input
