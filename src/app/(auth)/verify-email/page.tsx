@@ -2,23 +2,26 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MailCheck, RefreshCw } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { MailCheck, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { useCurrentUser } from "@/hooks/use-current-user";
 
-export default function VerifyEmailPage() {
-  const { user } = useCurrentUser();
+function VerifyEmailForm() {
+  const searchParams = useSearchParams();
   const { toast } = useToast();
-  const [resending, setResending] = React.useState(false);
+  const [email, setEmail] = React.useState(searchParams.get("email") ?? "");
+  const [sending, setSending] = React.useState(false);
 
   async function resend() {
-    if (!user?.email) return;
-    setResending(true);
+    if (!email) return;
+    setSending(true);
     const supabase = createClient();
-    const { error } = await supabase.auth.resend({ type: "signup", email: user.email });
-    setResending(false);
+    const { error } = await supabase.auth.resend({ type: "signup", email });
+    setSending(false);
 
     if (error) {
       toast({ variant: "destructive", title: "Couldn't resend", description: error.message });
@@ -34,13 +37,22 @@ export default function VerifyEmailPage() {
       </div>
       <h1 className="mt-4 font-display text-xl font-semibold tracking-tight">Verify your email</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        We sent a verification link to{" "}
-        <span className="font-medium text-foreground">{user?.email ?? "your inbox"}</span>. Click it to activate
-        your account.
+        Enter your email below to resend the confirmation link.
       </p>
 
-      <Button variant="outline" className="mt-6" onClick={resend} disabled={resending || !user?.email}>
-        <RefreshCw className={resending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+      <div className="mt-6 space-y-2 text-left">
+        <Label htmlFor="resend-email">Email</Label>
+        <Input
+          id="resend-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@company.com"
+        />
+      </div>
+
+      <Button variant="outline" className="mt-4 w-full" onClick={resend} disabled={sending || !email}>
+        {sending && <Loader2 className="h-4 w-4 animate-spin" />}
         Resend verification email
       </Button>
 
@@ -51,5 +63,13 @@ export default function VerifyEmailPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <VerifyEmailForm />
+    </React.Suspense>
   );
 }
