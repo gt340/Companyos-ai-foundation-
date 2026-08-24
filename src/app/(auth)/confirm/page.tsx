@@ -15,6 +15,7 @@ function ConfirmForm() {
 
   const code = searchParams.get("code");
   const redirectTo = searchParams.get("redirectTo") || "/onboarding";
+  const [expired, setExpired] = React.useState(false);
 
   async function handleConfirm() {
     if (!code) return;
@@ -29,6 +30,7 @@ function ConfirmForm() {
         title: "Couldn't confirm your account",
         description: error.message || "This link may have expired — request a new one.",
       });
+      setExpired(true);
       return;
     }
 
@@ -59,6 +61,13 @@ function ConfirmForm() {
       <Button variant="signal" className="mt-6 w-full" onClick={handleConfirm} disabled={loading}>
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
         Confirm my account
+        {expired && (
+        <p className="mt-4 text-sm text-muted-foreground">
+          <Link href="/verify-email" className="font-medium text-foreground hover:text-signal">
+            Resend verification email
+          </Link>
+        </p>
+      )}
       </Button>
     </div>
   );
