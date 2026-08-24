@@ -14,6 +14,7 @@ import { useCurrentUser } from "@/hooks/use-current-user";
 import { getInitials } from "@/lib/utils";
 import { updateProfileSchema } from "@/lib/validations/organization";
 import { useToast } from "@/hooks/use-toast";
+import { TwoFactorSection } from "@/components/security/two-factor-section";
 
 interface Profile {
   fullName: string | null;
@@ -65,7 +66,7 @@ export default function ProfilePage() {
 
   async function handlePhotoSelected(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    event.target.value = ""; // allow re-selecting the same file later
+    event.target.value = "";
     if (!file || !user) return;
 
     if (!ALLOWED_AVATAR_TYPES.includes(file.type)) {
@@ -230,6 +231,8 @@ export default function ProfilePage() {
           </CardFooter>
         </form>
       </Card>
+
+      <TwoFactorSection />
     </div>
   );
 }
