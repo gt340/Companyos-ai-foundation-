@@ -38,6 +38,7 @@ export function TwoFactorSection() {
       setFactors(data.totp.filter((f) => f.status === 'verified'))
     }
     setLoading(false)
+    return data
   }, [supabase])
 
   React.useEffect(() => {
@@ -46,7 +47,19 @@ export function TwoFactorSection() {
 
   async function startEnrollment() {
     setEnrolling(true)
-    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' })
+
+    // Clean up any stale unverified factor left over from a previous failed attempt —
+    // Supabase requires unique factor names, and a leftover unverified one blocks new enrollment.
+    const { data: existing } = await supabase.auth.mfa.listFactors()
+    const staleFactor = existing?.all.find((f) => f.status === 'unverified')
+    if (staleFactor) {
+      await supabase.auth.mfa.unenroll({ factorId: staleFactor.id })
+    }
+
+    const { data, error } = await supabase.auth.mfa.enroll({
+      factorType: 'totp',
+      friendlyName: `Authenticator app ${Date.now()}`,
+    })
     if (error) {
       toast({ variant: 'destructive', title: "Couldn't start 2FA setup", description: error.message })
       setEnrolling(false)
