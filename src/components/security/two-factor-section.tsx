@@ -142,7 +142,7 @@ export function TwoFactorSection() {
               <ShieldCheck className="h-4 w-4 text-signal" />
               <span className="text-sm font-medium">Authenticator app enabled</span>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => removeFactor(factors[0].id)}>
+            <Button size="sm" variant="ghost" onClick={() => factors[0] && removeFactor(factors[0].id)}>
               <ShieldOff className="h-4 w-4" /> Remove
             </Button>
           </div>
