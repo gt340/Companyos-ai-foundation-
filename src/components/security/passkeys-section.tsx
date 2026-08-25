@@ -54,7 +54,7 @@ export function PasskeysSection() {
       if (!optionsRes.ok) throw new Error('Could not start passkey setup')
       const options = await optionsRes.json()
 
-      const registrationResponse = await startRegistration({ optionsJSON: options })
+      const registrationResponse = await startRegistration(options)
 
       const deviceName =
         typeof navigator !== 'undefined' && /iPhone|iPad/.test(navigator.userAgent)
