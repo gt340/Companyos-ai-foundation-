@@ -14,6 +14,7 @@ import { GoogleSignInButton } from "@/components/auth/google-signin-button";
 import { MicrosoftSignInButton } from "@/components/auth/microsoft-signin-button";
 import { GitHubSignInButton } from "@/components/auth/github-signin-button";
 import { MagicLinkForm } from "@/components/auth/magic-link-form";
+import { PasskeySignInButton } from "@/components/auth/passkey-signin-button";
 
 function LoginForm() {
   const router = useRouter();
@@ -76,6 +77,9 @@ function LoginForm() {
       </div>
       <div className="mt-3">
         <GitHubSignInButton redirectTo={searchParams.get("redirectTo") ?? undefined} />
+      </div>
+      <div className="mt-3">
+        <PasskeySignInButton redirectTo={searchParams.get("redirectTo") ?? undefined} />
       </div>
 
       <div className="my-6 flex items-center gap-3">
@@ -163,4 +167,4 @@ export default function LoginPage() {
       <LoginForm />
     </React.Suspense>
   );
-}
+         }
