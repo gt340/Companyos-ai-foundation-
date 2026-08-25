@@ -15,6 +15,7 @@ import { getInitials } from "@/lib/utils";
 import { updateProfileSchema } from "@/lib/validations/organization";
 import { useToast } from "@/hooks/use-toast";
 import { TwoFactorSection } from "@/components/security/two-factor-section";
+import { PasskeysSection } from "@/components/security/passkeys-section";
 
 interface Profile {
   fullName: string | null;
@@ -233,6 +234,7 @@ export default function ProfilePage() {
       </Card>
 
       <TwoFactorSection />
+      <PasskeysSection />
     </div>
   );
-}
+            }
