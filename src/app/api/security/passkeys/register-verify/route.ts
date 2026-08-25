@@ -65,13 +65,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Passkey verification failed" }, { status: 400 });
   }
 
-  const { credential } = verification.registrationInfo;
+  const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
 
   const { error: insertError } = await supabase.from("passkeys").insert({
     userId: user.id,
-    credentialId: credential.id,
-    publicKey: Buffer.from(credential.publicKey).toString("base64url"),
-    counter: credential.counter,
+    credentialId: credentialID,
+    publicKey: Buffer.from(credentialPublicKey).toString("base64url"),
+    counter,
     deviceName: deviceName || "Passkey",
     transports: response.response?.transports ?? [],
   });
@@ -84,4 +84,4 @@ export async function POST(request: Request) {
   await supabase.from("webauthn_challenges").delete().eq("id", challengeRow.id);
 
   return NextResponse.json({ verified: true });
-}
+      }
