@@ -23,7 +23,7 @@ export async function GET() {
     where: { userId: user.id, organizationId, isActive: true },
     include: {
       organization: { include: { settings: true } },
-      role: { include: { permissions: true } },
+      role: { include: { permissions: { include: { permission: true } } } },
     },
   });
 
