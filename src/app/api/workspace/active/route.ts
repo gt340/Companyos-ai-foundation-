@@ -40,12 +40,5 @@ export async function PATCH(request: Request) {
     path: "/",
   });
 
-  // Keep the DB in sync too, so it survives a cleared cookie and other
-  // surfaces (e.g. a future mobile app) can read the same preference.
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastActiveOrganizationId: organizationId },
-  });
-
   return NextResponse.json({ organizationId });
-      }
+}
