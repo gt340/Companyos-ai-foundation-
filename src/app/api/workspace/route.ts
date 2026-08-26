@@ -21,7 +21,10 @@ export async function GET() {
 
   const membership = await prisma.membership.findFirst({
     where: { userId: user.id, organizationId, isActive: true },
-    include: { organization: true, role: { include: { permissions: true } } },
+    include: {
+      organization: { include: { settings: true } },
+      role: { include: { permissions: true } },
+    },
   });
 
   if (!membership) {
