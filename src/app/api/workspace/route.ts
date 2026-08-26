@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
-import { getPrimaryMembership } from "@/lib/rbac";
+import { getActiveOrganizationId } from "@/lib/active-org";
 
 export async function GET() {
   const supabase = await createClient();
@@ -13,7 +13,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const membership = await getPrimaryMembership(user.id);
+  const organizationId = await getActiveOrganizationId(user.id);
+
+  if (!organizationId) {
+    return NextResponse.json({ organization: null });
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: { userId: user.id, organizationId, isActive: true },
+    include: { organization: true, role: { include: { permissions: true } } },
+  });
 
   if (!membership) {
     return NextResponse.json({ organization: null });
@@ -55,4 +64,4 @@ export async function GET() {
       expiresAt: i.expiresAt,
     })),
   });
-      }
+    }
