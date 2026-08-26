@@ -66,7 +66,7 @@ async function fetchWorkspace(): Promise<WorkspaceData> {
 export default function SettingsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data, isLoading } = useQuery({ queryKey: ["workspace"], queryFn: fetchWorkspace });
+  const { data, isLoading, refetch, isFetching } = useQuery({ queryKey: ["workspace"], queryFn: fetchWorkspace });
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
   const canInvite = data?.permissions.includes("member.invite") ?? false;
@@ -210,11 +210,16 @@ export default function SettingsPage() {
                 <CardTitle className="text-base">Members</CardTitle>
                 <CardDescription>People with access to this organization.</CardDescription>
               </div>
-              {canInvite && (
-                <Button size="sm" variant="signal" onClick={() => setInviteOpen(true)}>
-                  <UserPlus className="h-4 w-4" /> Invite member
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+                  {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
                 </Button>
-              )}
+                {canInvite && (
+                  <Button size="sm" variant="signal" onClick={() => setInviteOpen(true)}>
+                    <UserPlus className="h-4 w-4" /> Invite member
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {data.members.map((m) => (
@@ -451,4 +456,4 @@ function InviteMemberDialog({
       </DialogContent>
     </Dialog>
   );
-    }
+                                      }
