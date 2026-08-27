@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, UserPlus, Copy } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Loader2, UserPlus, Copy, Crown } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -13,7 +14,6 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSearchParams } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -50,6 +50,7 @@ interface WorkspaceData {
   permissions: string[];
   members: {
     id: string;
+    userId: string;
     fullName: string | null;
     email: string;
     roleKey: string;
@@ -73,9 +74,11 @@ export default function SettingsPage() {
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
   const canInvite = data?.permissions.includes("member.invite") ?? false;
+  const isOwner = data?.currentRole === "OWNER";
 
   const [orgForm, setOrgForm] = React.useState({ name: "", slug: "" });
   const [inviteOpen, setInviteOpen] = React.useState(false);
+  const [transferTarget, setTransferTarget] = React.useState<{ userId: string; label: string } | null>(null);
 
   React.useEffect(() => {
     if (data?.organization) {
@@ -117,6 +120,25 @@ export default function SettingsPage() {
       invalidate();
     },
     onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't save", description: err.message }),
+  });
+
+  const transferMutation = useMutation({
+    mutationFn: (newOwnerUserId: string) =>
+      fetch("/api/workspace/transfer-ownership", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newOwnerUserId }),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? "Transfer failed");
+        return body;
+      }),
+    onSuccess: () => {
+      toast({ variant: "success", title: "Ownership transferred" });
+      setTransferTarget(null);
+      invalidate();
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't transfer ownership", description: err.message }),
   });
 
   const [requireTwoFactor, setRequireTwoFactor] = React.useState(false);
@@ -233,7 +255,20 @@ export default function SettingsPage() {
                     </p>
                     <p className="text-xs text-muted-foreground">{m.email}</p>
                   </div>
-                  <Badge variant={m.roleKey === "OWNER" ? "signal" : "secondary"}>{roleLabels[m.roleKey]}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={m.roleKey === "OWNER" ? "signal" : "secondary"}>{roleLabels[m.roleKey]}</Badge>
+                    {isOwner && !m.isCurrentUser && m.roleKey !== "OWNER" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setTransferTarget({ userId: m.userId, label: m.fullName || m.email })
+                        }
+                      >
+                        <Crown className="h-4 w-4" /> Make owner
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -344,6 +379,36 @@ export default function SettingsPage() {
       </Tabs>
 
       <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} onInvited={invalidate} />
+
+      <Dialog open={Boolean(transferTarget)} onOpenChange={(open) => !open && setTransferTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transfer ownership?</DialogTitle>
+            <DialogDescription>
+              {transferTarget && (
+                <>
+                  You're about to make <strong>{transferTarget.label}</strong> the owner of this organization. You'll
+                  be moved to the Admin role and will lose owner-level permissions. This cannot be undone by you alone
+                  — only the new owner can transfer it back.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={transferMutation.isPending}
+              onClick={() => transferTarget && transferMutation.mutate(transferTarget.userId)}
+            >
+              {transferMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Yes, transfer ownership
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -459,4 +524,4 @@ function InviteMemberDialog({
       </DialogContent>
     </Dialog>
   );
-                                      }
+}
