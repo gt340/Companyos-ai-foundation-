@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSearchParams } from "next/navigation";
 import {
   Select,
   SelectContent,
@@ -66,6 +67,8 @@ async function fetchWorkspace(): Promise<WorkspaceData> {
 export default function SettingsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get("tab") ?? "organization";
   const { data, isLoading, refetch, isFetching } = useQuery({ queryKey: ["workspace"], queryFn: fetchWorkspace });
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
@@ -155,7 +158,7 @@ export default function SettingsPage() {
     <div className="max-w-3xl space-y-8">
       <PageHeader title="Settings" description="Manage your organization, members, and security preferences." />
 
-      <Tabs defaultValue="organization">
+      <Tabs defaultValue={initialTab}>
         <TabsList>
           <TabsTrigger value="organization">Organization</TabsTrigger>
           <TabsTrigger value="members">Members</TabsTrigger>
