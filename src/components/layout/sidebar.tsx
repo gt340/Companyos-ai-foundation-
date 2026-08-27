@@ -10,6 +10,7 @@ import {
   CreditCard,
   Bell,
   Activity,
+  Users,
 } from "lucide-react";
 import { Logo } from "@/components/shared/logo";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Company", href: "/onboarding", icon: Building2 },
+  { label: "Team", href: "/settings?tab=members", icon: Users },
   { label: "Notifications", href: "/notifications", icon: Bell },
   { label: "Activity logs", href: "/activity-logs", icon: Activity },
   { label: "Billing", href: "/billing", icon: CreditCard },
