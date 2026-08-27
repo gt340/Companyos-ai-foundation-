@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { WorkspaceSwitcher } from "@/components/dashboard/workspace-switcher";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import { getInitials } from "@/lib/utils";
 
 export function Topbar() {
@@ -34,6 +35,7 @@ export function Topbar() {
 
   return (
     <header className="flex h-16 items-center gap-4 border-b border-border px-4 sm:px-6">
+      <MobileNav />
       <WorkspaceSwitcher />
 
       <div className="relative hidden max-w-md flex-1 sm:block">
