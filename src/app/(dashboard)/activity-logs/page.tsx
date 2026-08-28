@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { timeAgo } from "@/lib/utils";
+import { getActiveOrganizationId } from "@/lib/active-org";
 
 const categoryVariant: Record<string, "default" | "secondary" | "destructive" | "outline" | "signal"> = {
   AUTH: "secondary",
@@ -26,7 +27,13 @@ export default async function ActivityLogsPage() {
   } = await supabase.auth.getUser();
 
   const membership = user
-    ? await prisma.membership.findFirst({ where: { userId: user.id, isActive: true } })
+    ? await prisma.membership.findFirst({
+        where: {
+          userId: user.id,
+          isActive: true,
+          organizationId: (await getActiveOrganizationId(user.id)) ?? undefined,
+        },
+      })
     : null;
 
   const logs = membership
