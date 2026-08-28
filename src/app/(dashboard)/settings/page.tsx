@@ -80,7 +80,8 @@ export default function SettingsPage() {
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
   const canInvite = data?.permissions.includes("member.invite") ?? false;
-  const canManageMembers = data?.permissions.includes("member.manage") ?? false;
+  const canManageMembers = data?.permissions.includes("role.assign") ?? false;
+  const canRemoveMembers = data?.permissions.includes("member.remove") ?? false;
   const isOwner = data?.currentRole === "OWNER";
 
   const [orgForm, setOrgForm] = React.useState({ name: "", slug: "" });
