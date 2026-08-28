@@ -3,14 +3,18 @@ import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { getActiveOrganizationId } from "@/lib/active-org";
 
-async function requireManagePermission(userId: string, organizationId: string) {
+async function getMemberPermissions(userId: string, organizationId: string) {
   const membership = await prisma.membership.findFirst({
     where: { userId, organizationId, isActive: true },
     include: { role: { include: { permissions: { include: { permission: true } } } } },
   });
 
   const permissions = membership?.role.permissions.map((p) => p.permission.key) ?? [];
-  return { membership, canManage: permissions.includes("member.manage") };
+  return {
+    membership,
+    canAssignRole: permissions.includes("role.assign"),
+    canRemove: permissions.includes("member.remove"),
+  };
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ membershipId: string }> }) {
@@ -29,8 +33,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ me
     return NextResponse.json({ error: "No active organization" }, { status: 400 });
   }
 
-  const { canManage } = await requireManagePermission(user.id, organizationId);
-  if (!canManage) {
+  const { canAssignRole } = await getMemberPermissions(user.id, organizationId);
+  if (!canAssignRole) {
     return NextResponse.json({ error: "You don't have permission to manage members" }, { status: 403 });
   }
 
@@ -96,8 +100,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ m
     return NextResponse.json({ error: "No active organization" }, { status: 400 });
   }
 
-  const { canManage } = await requireManagePermission(user.id, organizationId);
-  if (!canManage) {
+  const { canRemove } = await getMemberPermissions(user.id, organizationId);
+  if (!canRemove) {
     return NextResponse.json({ error: "You don't have permission to manage members" }, { status: 403 });
   }
 
