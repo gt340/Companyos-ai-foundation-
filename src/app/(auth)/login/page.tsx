@@ -50,13 +50,22 @@ function LoginForm() {
     setLoading(true);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithPassword(result.data);
+    const { data: signInData, error } = await supabase.auth.signInWithPassword(result.data);
 
     setLoading(false);
 
     if (error) {
       toast({ variant: "destructive", title: "Couldn't sign you in", description: error.message });
       return;
+    }
+
+    if (signInData.session && signInData.user) {
+      await supabase.from("user_sessions").insert({
+        userId: signInData.user.id,
+        authSessionId: signInData.session.access_token.slice(0, 16),
+        loginMethod: "password",
+        userAgent: navigator.userAgent,
+      });
     }
 
     const redirectTo = searchParams.get("redirectTo") || "/dashboard";
