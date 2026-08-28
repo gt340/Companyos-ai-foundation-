@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     }
   );
 
-  const { error: verifyOtpError } = await supabase.auth.verifyOtp({
+  const { data: otpData, error: verifyOtpError } = await supabase.auth.verifyOtp({
     token_hash: linkData.properties.hashed_token,
     type: "magiclink",
   });
@@ -114,5 +114,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Couldn't complete sign-in" }, { status: 500 });
   }
 
+  if (otpData.session) {
+    await admin.from("user_sessions").insert({
+      userId,
+      authSessionId: otpData.session.access_token.slice(0, 16),
+      loginMethod: "passkey",
+      userAgent: request.headers.get("user-agent") ?? null,
+    });
+  }
+
   return NextResponse.json({ verified: true });
-    }
