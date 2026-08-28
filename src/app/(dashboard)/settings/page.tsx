@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { Loader2, UserPlus, Copy, Crown } from "lucide-react";
+import { Loader2, UserPlus, Copy, Crown, MoreVertical } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -29,6 +29,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 
 const roleLabels: Record<string, string> = {
@@ -74,11 +80,13 @@ export default function SettingsPage() {
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
   const canInvite = data?.permissions.includes("member.invite") ?? false;
+  const canManageMembers = data?.permissions.includes("member.manage") ?? false;
   const isOwner = data?.currentRole === "OWNER";
 
   const [orgForm, setOrgForm] = React.useState({ name: "", slug: "" });
   const [inviteOpen, setInviteOpen] = React.useState(false);
   const [transferTarget, setTransferTarget] = React.useState<{ userId: string; label: string } | null>(null);
+  const [removeTarget, setRemoveTarget] = React.useState<{ id: string; label: string } | null>(null);
 
   React.useEffect(() => {
     if (data?.organization) {
@@ -139,6 +147,39 @@ export default function SettingsPage() {
       invalidate();
     },
     onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't transfer ownership", description: err.message }),
+  });
+
+  const roleMutation = useMutation({
+    mutationFn: ({ membershipId, roleKey }: { membershipId: string; roleKey: string }) =>
+      fetch(`/api/workspace/members/${membershipId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roleKey }),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? "Couldn't update role");
+        return body;
+      }),
+    onSuccess: () => {
+      toast({ variant: "success", title: "Role updated" });
+      invalidate();
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't update role", description: err.message }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (membershipId: string) =>
+      fetch(`/api/workspace/members/${membershipId}`, { method: "DELETE" }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? "Couldn't remove member");
+        return body;
+      }),
+    onSuccess: () => {
+      toast({ variant: "success", title: "Member removed" });
+      setRemoveTarget(null);
+      invalidate();
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't remove member", description: err.message }),
   });
 
   const [requireTwoFactor, setRequireTwoFactor] = React.useState(false);
@@ -256,17 +297,50 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">{m.email}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant={m.roleKey === "OWNER" ? "signal" : "secondary"}>{roleLabels[m.roleKey]}</Badge>
+                    {canManageMembers && m.roleKey !== "OWNER" && !m.isCurrentUser ? (
+                      <Select
+                        value={m.roleKey}
+                        onValueChange={(roleKey) => roleMutation.mutate({ membershipId: m.id, roleKey })}
+                      >
+                        <SelectTrigger className="h-8 w-28 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ADMIN">Admin</SelectItem>
+                          <SelectItem value="MEMBER">Member</SelectItem>
+                          <SelectItem value="VIEWER">Viewer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge variant={m.roleKey === "OWNER" ? "signal" : "secondary"}>{roleLabels[m.roleKey]}</Badge>
+                    )}
+
                     {isOwner && !m.isCurrentUser && m.roleKey !== "OWNER" && (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() =>
-                          setTransferTarget({ userId: m.userId, label: m.fullName || m.email })
-                        }
+                        onClick={() => setTransferTarget({ userId: m.userId, label: m.fullName || m.email })}
                       >
-                        <Crown className="h-4 w-4" /> Make owner
+                        <Crown className="h-4 w-4" />
                       </Button>
+                    )}
+
+                    {canManageMembers && !m.isCurrentUser && m.roleKey !== "OWNER" && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="icon" variant="ghost">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setRemoveTarget({ id: m.id, label: m.fullName || m.email })}
+                          >
+                            Remove from organization
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                   </div>
                 </div>
@@ -409,6 +483,35 @@ export default function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={Boolean(removeTarget)} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove member?</DialogTitle>
+            <DialogDescription>
+              {removeTarget && (
+                <>
+                  <strong>{removeTarget.label}</strong> will immediately lose access to this organization. They can
+                  be invited again later if needed.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={removeMutation.isPending}
+              onClick={() => removeTarget && removeMutation.mutate(removeTarget.id)}
+            >
+              {removeMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Remove member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -524,4 +627,4 @@ function InviteMemberDialog({
       </DialogContent>
     </Dialog>
   );
-}
+  }
