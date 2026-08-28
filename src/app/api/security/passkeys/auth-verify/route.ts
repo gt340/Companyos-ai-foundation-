@@ -66,7 +66,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Passkey verification failed" }, { status: 400 });
   }
 
-  // Update the stored counter (replay-attack protection) and last-used timestamp
   await admin
     .from("passkeys")
     .update({ counter: verification.authenticationInfo.newCounter, lastUsedAt: new Date().toISOString() })
@@ -74,8 +73,6 @@ export async function POST(request: Request) {
 
   await admin.from("webauthn_challenges").delete().eq("id", challengeRow.id);
 
-  // Generate a real magic-link-style token and exchange it for a session,
-  // since there's no password to sign in with here.
   const { data: userRow } = await admin.auth.admin.getUserById(userId);
   if (!userRow.user?.email) {
     return NextResponse.json({ error: "Account has no email on file" }, { status: 400 });
@@ -124,3 +121,4 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ verified: true });
+    }
