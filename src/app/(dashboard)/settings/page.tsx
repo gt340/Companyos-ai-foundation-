@@ -86,7 +86,8 @@ function SettingsPageContent() {
 
   const [orgForm, setOrgForm] = React.useState({ name: "", slug: "" });
   const [inviteOpen, setInviteOpen] = React.useState(false);
-  const [transferTarget, setTransferTarget] = React.useState<{ userId: string; label: string } | null>(null);
+  const [transferOpen, setTransferOpen] = React.useState(false);
+  const [transferPrefillEmail, setTransferPrefillEmail] = React.useState("");
   const [removeTarget, setRemoveTarget] = React.useState<{ id: string; label: string } | null>(null);
 
   React.useEffect(() => {
@@ -129,25 +130,6 @@ function SettingsPageContent() {
       invalidate();
     },
     onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't save", description: err.message }),
-  });
-
-  const transferMutation = useMutation({
-    mutationFn: (newOwnerUserId: string) =>
-      fetch("/api/workspace/transfer-ownership", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newOwnerUserId }),
-      }).then(async (res) => {
-        const body = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(body?.error ?? "Transfer failed");
-        return body;
-      }),
-    onSuccess: () => {
-      toast({ variant: "success", title: "Ownership transferred" });
-      setTransferTarget(null);
-      invalidate();
-    },
-    onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't transfer ownership", description: err.message }),
   });
 
   const roleMutation = useMutation({
@@ -281,6 +263,18 @@ function SettingsPageContent() {
                 <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
                   {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : "Refresh"}
                 </Button>
+                {isOwner && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setTransferPrefillEmail("");
+                      setTransferOpen(true);
+                    }}
+                  >
+                    <Crown className="h-4 w-4" /> Transfer ownership
+                  </Button>
+                )}
                 {canInvite && (
                   <Button size="sm" variant="signal" onClick={() => setInviteOpen(true)}>
                     <UserPlus className="h-4 w-4" /> Invite member
@@ -314,16 +308,6 @@ function SettingsPageContent() {
                       </Select>
                     ) : (
                       <Badge variant={m.roleKey === "OWNER" ? "signal" : "secondary"}>{roleLabels[m.roleKey]}</Badge>
-                    )}
-
-                    {isOwner && !m.isCurrentUser && m.roleKey !== "OWNER" && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setTransferTarget({ userId: m.userId, label: m.fullName || m.email })}
-                      >
-                        <Crown className="h-4 w-4" />
-                      </Button>
                     )}
 
                     {canRemoveMembers && !m.isCurrentUser && m.roleKey !== "OWNER" && (
@@ -454,36 +438,11 @@ function SettingsPageContent() {
       </Tabs>
 
       <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} onInvited={invalidate} />
-
-      <Dialog open={Boolean(transferTarget)} onOpenChange={(open) => !open && setTransferTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Transfer ownership?</DialogTitle>
-            <DialogDescription>
-              {transferTarget && (
-                <>
-                  You're about to make <strong>{transferTarget.label}</strong> the owner of this organization. You'll
-                  be moved to the Admin role and will lose owner-level permissions. This cannot be undone by you alone
-                  — only the new owner can transfer it back.
-                </>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTransferTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={transferMutation.isPending}
-              onClick={() => transferTarget && transferMutation.mutate(transferTarget.userId)}
-            >
-              {transferMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Yes, transfer ownership
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TransferOwnershipDialog
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        prefillEmail={transferPrefillEmail}
+      />
 
       <Dialog open={Boolean(removeTarget)} onOpenChange={(open) => !open && setRemoveTarget(null)}>
         <DialogContent>
@@ -630,10 +589,115 @@ function InviteMemberDialog({
   );
 }
 
+function TransferOwnershipDialog({
+  open,
+  onOpenChange,
+  prefillEmail,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  prefillEmail: string;
+}) {
+  const { toast } = useToast();
+  const [email, setEmail] = React.useState(prefillEmail);
+  const [transferUrl, setTransferUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (open) setEmail(prefillEmail);
+  }, [open, prefillEmail]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      fetch("/api/workspace/transfer-ownership/initiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetEmail: email }),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(body?.error ?? "Couldn't start transfer");
+        return body;
+      }),
+    onSuccess: (body) => {
+      setTransferUrl(body.transfer.transferUrl);
+    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Couldn't start transfer", description: err.message }),
+  });
+
+  function handleOpenChange(next: boolean) {
+    if (!next) {
+      setEmail("");
+      setTransferUrl(null);
+    }
+    onOpenChange(next);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Transfer ownership</DialogTitle>
+          <DialogDescription>
+            {transferUrl
+              ? "Share this link with them. They must sign in with this email and accept before ownership actually changes — you'll remain the owner until then."
+              : "Enter the email of who should become the new owner. They don't need to be a member yet."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {transferUrl ? (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-muted p-3">
+            <a
+              href={transferUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 truncate text-xs text-signal underline"
+            >
+              {transferUrl}
+            </a>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => {
+                navigator.clipboard.writeText(transferUrl);
+                toast({ title: "Copied" });
+              }}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <Label htmlFor="transferEmail">New owner's email</Label>
+            <Input
+              id="transferEmail"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="them@company.com"
+            />
+          </div>
+        )}
+
+        <DialogFooter>
+          {transferUrl ? (
+            <Button variant="signal" onClick={() => handleOpenChange(false)}>
+              Done
+            </Button>
+          ) : (
+            <Button variant="destructive" disabled={!email || mutation.isPending} onClick={() => mutation.mutate()}>
+              {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              Generate transfer link
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <React.Suspense fallback={null}>
       <SettingsPageContent />
     </React.Suspense>
   );
-}
+  }
