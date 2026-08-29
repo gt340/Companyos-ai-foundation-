@@ -36,24 +36,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "You already own this organization" }, { status: 400 });
   }
 
-  // Cancel any existing pending transfer for this org before starting a new one.
-  await prisma.ownershipTransfer.updateMany({
-    where: { organizationId, status: "PENDING" },
-    data: { status: "CANCELLED" },
-  });
+  await supabase
+    .from("ownership_transfers")
+    .update({ status: "CANCELLED" })
+    .eq("organizationId", organizationId)
+    .eq("status", "PENDING");
 
   const targetUser = await prisma.user.findUnique({ where: { email: targetEmail } });
   const token = randomBytes(24).toString("hex");
 
-  const transfer = await prisma.ownershipTransfer.create({
-    data: {
+  const { data: transfer, error: insertError } = await supabase
+    .from("ownership_transfers")
+    .insert({
       organizationId,
       currentOwnerId: user.id,
       targetEmail,
       targetUserId: targetUser?.id ?? null,
       token,
-    },
-  });
+    })
+    .select()
+    .single();
+
+  if (insertError || !transfer) {
+    return NextResponse.json({ error: insertError?.message ?? "Couldn't start transfer" }, { status: 500 });
+  }
 
   await prisma.activityLog.create({
     data: {
@@ -69,4 +75,4 @@ export async function POST(request: Request) {
   const transferUrl = `${baseUrl}/transfer-ownership/${token}`;
 
   return NextResponse.json({ transfer: { id: transfer.id, targetEmail, transferUrl, expiresAt: transfer.expiresAt } });
-}
+    }
