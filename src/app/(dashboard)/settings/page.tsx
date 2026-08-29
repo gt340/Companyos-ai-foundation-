@@ -71,7 +71,7 @@ async function fetchWorkspace(): Promise<WorkspaceData> {
   return res.json();
 }
 
-export default function SettingsPage() {
+export default function SettingsPageContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
@@ -627,5 +627,13 @@ function InviteMemberDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <SettingsPageContent />
+    </React.Suspense>
   );
 }
