@@ -80,7 +80,7 @@ export default function SettingsPage() {
 
   const canManage = data?.permissions.includes("organization.manage") ?? false;
   const canInvite = data?.permissions.includes("member.invite") ?? false;
-  const canManageMembers = data?.permissions.includes("role.assign") ?? false;
+  const canAssignRole = data?.permissions.includes("role.assign") ?? false;
   const canRemoveMembers = data?.permissions.includes("member.remove") ?? false;
   const isOwner = data?.currentRole === "OWNER";
 
@@ -298,7 +298,7 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">{m.email}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {canManageMembers && m.roleKey !== "OWNER" && !m.isCurrentUser ? (
+                    {canAssignRole && m.roleKey !== "OWNER" && !m.isCurrentUser ? (
                       <Select
                         value={m.roleKey}
                         onValueChange={(roleKey) => roleMutation.mutate({ membershipId: m.id, roleKey })}
@@ -326,7 +326,7 @@ export default function SettingsPage() {
                       </Button>
                     )}
 
-                    {canManageMembers && !m.isCurrentUser && m.roleKey !== "OWNER" && (
+                    {canRemoveMembers && !m.isCurrentUser && m.roleKey !== "OWNER" && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button size="icon" variant="ghost">
@@ -628,4 +628,4 @@ function InviteMemberDialog({
       </DialogContent>
     </Dialog>
   );
-  }
+}
