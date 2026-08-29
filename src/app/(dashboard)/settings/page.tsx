@@ -71,7 +71,7 @@ async function fetchWorkspace(): Promise<WorkspaceData> {
   return res.json();
 }
 
-export default function SettingsPageContent() {
+function SettingsPageContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
