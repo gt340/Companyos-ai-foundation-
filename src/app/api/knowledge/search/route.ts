@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     query,
-    results: (results ?? []).map((r: any) => ({
+    results: (results ?? []).map((r: { id: string; documentId: string; content: string; similarity: number; title: string; sourceType: string; category: string }) => ({
       chunkId: r.id,
       documentId: r.documentId,
       content: r.content,
