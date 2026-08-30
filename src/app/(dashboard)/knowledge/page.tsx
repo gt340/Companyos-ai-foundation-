@@ -256,7 +256,7 @@ export default function KnowledgeBasePage() {
           ) : (
             docs.map((doc) => {
               const Icon = sourceIcons[doc.sourceType] ?? FileText;
-              const status = statusLabel[doc.status] ?? statusLabel.PENDING;
+              const status = statusLabel[doc.status] ?? statusLabel.PENDING!;
               return (
                 <div key={doc.id} className="flex items-center justify-between rounded-md border border-border p-3">
                   <div className="flex min-w-0 items-center gap-3">
