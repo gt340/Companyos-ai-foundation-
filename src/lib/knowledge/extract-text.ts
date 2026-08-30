@@ -34,6 +34,7 @@ export async function extractFromExcel(buffer: Buffer): Promise<ExtractResult> {
     const parts: string[] = [];
     for (const sheetName of workbook.SheetNames) {
       const sheet = workbook.Sheets[sheetName];
+      if (!sheet) continue;
       const csv = XLSX.utils.sheet_to_csv(sheet);
       parts.push(`# Sheet: ${sheetName}\n${csv}`);
     }
