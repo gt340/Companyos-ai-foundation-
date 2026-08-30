@@ -4,15 +4,9 @@ import { cleanText } from "./extract-text";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-const CHUNK_SIZE = 1000; // characters, roughly ~200-250 tokens
-const CHUNK_OVERLAP = 150; // characters of overlap between consecutive chunks
+const CHUNK_SIZE = 1000;
+const CHUNK_OVERLAP = 150;
 
-/**
- * Splits cleaned text into overlapping chunks. Overlap preserves context
- * across chunk boundaries so a fact split across two chunks isn't lost
- * to retrieval — e.g. a sentence cut mid-thought still appears whole in
- * at least one chunk.
- */
 export function splitIntoChunks(text: string): string[] {
   if (text.length <= CHUNK_SIZE) return text.length > 0 ? [text] : [];
 
@@ -22,8 +16,6 @@ export function splitIntoChunks(text: string): string[] {
   while (start < text.length) {
     let end = Math.min(start + CHUNK_SIZE, text.length);
 
-    // Prefer breaking on a paragraph or sentence boundary near the target
-    // end, rather than mid-word, when one exists within a reasonable window.
     if (end < text.length) {
       const window = text.slice(start + CHUNK_SIZE - 200, end + 1);
       const lastBreak = Math.max(window.lastIndexOf("\n\n"), window.lastIndexOf(". "));
@@ -57,12 +49,6 @@ interface ProcessDocumentOptions {
   extraMetadata?: Record<string, unknown>;
 }
 
-/**
- * Takes raw extracted text for a document, cleans it, splits it into
- * chunks, generates embeddings in batches, and stores everything —
- * updating the document's status at each stage so the UI can show
- * live progress.
- */
 export async function processDocument({
   documentId,
   organizationId,
@@ -97,7 +83,6 @@ export async function processDocument({
       .update({ status: "EMBEDDING", extractedText: cleaned.slice(0, 50000) })
       .eq("id", documentId);
 
-    // Embed in batches to stay well under OpenAI's per-request input limits.
     const BATCH_SIZE = 50;
     const allEmbeddings: number[][] = [];
     for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
@@ -115,7 +100,6 @@ export async function processDocument({
       metadata: extraMetadata,
     }));
 
-    // Insert in batches too, to keep each request a reasonable size.
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
       const { error: insertError } = await admin.from("knowledge_chunks").insert(batch);
@@ -138,4 +122,6 @@ export async function processDocument({
       .from("knowledge_documents")
       .update({ status: "FAILED", errorMessage: message, updatedAt: new Date().toISOString() })
       .eq("id", documentId);
-    return { success: false, error: message
+    return { success: false, error: message };
+  }
+        }
