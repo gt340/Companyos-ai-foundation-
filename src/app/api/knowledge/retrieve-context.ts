@@ -62,8 +62,8 @@ export async function retrieveContext({
   }
 
   const chunks: RetrievedChunk[] = results
-    .filter((r: any) => r.similarity >= minSimilarity)
-    .map((r: any) => ({
+    .filter((r: { similarity: number }) => r.similarity >= minSimilarity)
+    .map((r: { content: string; title: string; sourceType: string; similarity: number }) => ({
       content: r.content,
       documentTitle: r.title,
       sourceType: r.sourceType,
