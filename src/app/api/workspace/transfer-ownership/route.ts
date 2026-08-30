@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
-import { getActiveOrganizationId } from "@/lib/active-org";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -10,41 +10,48 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const organizationId = await getActiveOrganizationId(user.id);
-  if (!organizationId) {
-    return NextResponse.json({ error: "No active organization" }, { status: 400 });
+    return NextResponse.json({ error: "You must be signed in to accept this transfer" }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
-  const newOwnerUserId = body?.newOwnerUserId;
-  if (!newOwnerUserId || typeof newOwnerUserId !== "string") {
-    return NextResponse.json({ error: "newOwnerUserId is required" }, { status: 422 });
+  const token = body?.token;
+
+  if (!token || typeof token !== "string") {
+    return NextResponse.json({ error: "Missing transfer token" }, { status: 422 });
   }
 
-  // Confirm the requester is genuinely the current owner — never trust
-  // client-side role claims for something this sensitive.
-  const organization = await prisma.organization.findUnique({
-    where: { id: organizationId },
-  });
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
 
-  if (!organization || organization.ownerId !== user.id) {
-    return NextResponse.json({ error: "Only the current owner can transfer ownership" }, { status: 403 });
+  const { data: transfer } = await admin
+    .from("ownership_transfers")
+    .select("*")
+    .eq("token", token)
+    .maybeSingle();
+
+  if (!transfer) {
+    return NextResponse.json({ error: "This transfer link is invalid" }, { status: 404 });
   }
 
-  if (newOwnerUserId === user.id) {
-    return NextResponse.json({ error: "You already own this organization" }, { status: 400 });
+  if (transfer.status !== "PENDING") {
+    return NextResponse.json({ error: "This transfer is no longer active" }, { status: 400 });
   }
 
-  const targetMembership = await prisma.membership.findFirst({
-    where: { userId: newOwnerUserId, organizationId, isActive: true },
-  });
-
-  if (!targetMembership) {
-    return NextResponse.json({ error: "That person isn't an active member of this organization" }, { status: 404 });
+  if (new Date(transfer.expiresAt) < new Date()) {
+    await admin.from("ownership_transfers").update({ status: "EXPIRED" }).eq("id", transfer.id);
+    return NextResponse.json({ error: "This transfer link has expired" }, { status: 400 });
   }
+
+  if (user.email?.toLowerCase() !== transfer.targetEmail.toLowerCase()) {
+    return NextResponse.json(
+      { error: `This transfer was sent to ${transfer.targetEmail}. Sign in with that email to accept it.` },
+      { status: 403 }
+    );
+  }
+
+  const organizationId = transfer.organizationId;
 
   const [ownerRole, adminRole] = await Promise.all([
     prisma.role.findFirstOrThrow({ where: { organizationId, key: "OWNER" } }),
@@ -52,22 +59,29 @@ export async function POST(request: Request) {
   ]);
 
   await prisma.$transaction(async (tx) => {
-    // Move the target member into the OWNER role.
-    await tx.membership.update({
-      where: { id: targetMembership.id },
-      data: { roleId: ownerRole.id },
+    const existingMembership = await tx.membership.findFirst({
+      where: { userId: user.id, organizationId },
     });
 
-    // Step the outgoing owner down to Admin rather than leaving them
-    // without any role — they keep access, just not ownership.
+    if (existingMembership) {
+      await tx.membership.update({
+        where: { id: existingMembership.id },
+        data: { roleId: ownerRole.id, isActive: true },
+      });
+    } else {
+      await tx.membership.create({
+        data: { userId: user.id, organizationId, roleId: ownerRole.id },
+      });
+    }
+
     await tx.membership.updateMany({
-      where: { userId: user.id, organizationId },
+      where: { userId: transfer.currentOwnerId, organizationId },
       data: { roleId: adminRole.id },
     });
 
     await tx.organization.update({
       where: { id: organizationId },
-      data: { ownerId: newOwnerUserId },
+      data: { ownerId: user.id },
     });
 
     await tx.activityLog.create({
@@ -76,10 +90,15 @@ export async function POST(request: Request) {
         actorId: user.id,
         category: "ORGANIZATION",
         action: "organization.ownership_transferred",
-        metadata: { previousOwnerId: user.id, newOwnerId: newOwnerUserId },
+        metadata: { previousOwnerId: transfer.currentOwnerId, newOwnerId: user.id },
       },
     });
   });
 
-  return NextResponse.json({ success: true });
-}
+  await admin
+    .from("ownership_transfers")
+    .update({ status: "ACCEPTED", respondedAt: new Date().toISOString() })
+    .eq("id", transfer.id);
+
+  return NextResponse.json({ success: true, organizationId });
+    }
