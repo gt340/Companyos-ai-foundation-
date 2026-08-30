@@ -11,6 +11,7 @@ import {
   Bell,
   Activity,
   Users,
+  BookOpen,
 } from "lucide-react";
 import { Logo } from "@/components/shared/logo";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Company", href: "/onboarding", icon: Building2 },
+  { label: "Knowledge Base", href: "/knowledge", icon: BookOpen },
   { label: "Team", href: "/settings?tab=members", icon: Users },
   { label: "Notifications", href: "/notifications", icon: Bell },
   { label: "Activity logs", href: "/activity-logs", icon: Activity },
