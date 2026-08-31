@@ -1,11 +1,37 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
 
-export const maxDuration = 120;
+export const maxDuration = 60;
+
+async function runUrlProcessing(
+  admin: ReturnType<typeof createAdminClient>,
+  documentId: string,
+  organizationId: string,
+  url: string,
+  category: string
+) {
+  const extractResult = await extractFromUrl(url);
+
+  if ("error" in extractResult) {
+    await admin
+      .from("knowledge_documents")
+      .update({ status: "FAILED", errorMessage: extractResult.error })
+      .eq("id", documentId);
+    return;
+  }
+
+  await processDocument({
+    documentId,
+    organizationId,
+    rawText: extractResult.text,
+    extraMetadata: { sourceUrl: url, category },
+  });
+}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -60,26 +86,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: docError?.message ?? "Couldn't create document record" }, { status: 500 });
   }
 
-  const extractResult = await extractFromUrl(url);
+  after(() => runUrlProcessing(admin, doc.id, organizationId, url, category));
 
-  if ("error" in extractResult) {
-    await admin
-      .from("knowledge_documents")
-      .update({ status: "FAILED", errorMessage: extractResult.error })
-      .eq("id", doc.id);
-    return NextResponse.json({ error: extractResult.error, documentId: doc.id }, { status: 500 });
-  }
-
-  const result = await processDocument({
-    documentId: doc.id,
-    organizationId,
-    rawText: extractResult.text,
-    extraMetadata: { sourceUrl: url, category },
-  });
-
-  if (!result.success) {
-    return NextResponse.json({ error: result.error, documentId: doc.id }, { status: 500 });
-  }
-
-  return NextResponse.json({ documentId: doc.id, status: "READY" });
-}
+  return NextResponse.json({ documentId: doc.id, status: "EXTRACTING" });
+    }
