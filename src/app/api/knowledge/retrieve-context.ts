@@ -48,10 +48,9 @@ export async function retrieveContext({
     model: "text-embedding-3-small",
     input: query,
   });
-  const queryEmbedding = embeddingResponse.data[0].embedding;
+  const queryEmbedding = embeddingResponse.data[0]!.embedding;
 
-  const { data: results, error } = await admin.rpc("match_knowledge_chunks", {
-    query_embedding: queryEmbedding,
+  const { data: results, error } = await admin.rpc("match_knowledg
     match_organization_id: organizationId,
     match_count: matchCount,
     match_category: category ?? null,
