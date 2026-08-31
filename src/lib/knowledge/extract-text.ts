@@ -57,7 +57,7 @@ export async function extractFromPowerPoint(buffer: Buffer): Promise<ExtractResu
 
     const parts: string[] = [];
     for (const [index, fileName] of slideFiles.entries()) {
-      const xml = await zip.files[fileName].async("text");
+      const xml = await zip.files[fileName]!.async("text");
       // Slide text lives inside <a:t>...</a:t> tags in the raw XML.
       const matches = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]);
       parts.push(`# Slide ${index + 1}\n${matches.join(" ")}`);
