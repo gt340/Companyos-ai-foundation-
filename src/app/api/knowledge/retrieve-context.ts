@@ -18,20 +18,13 @@ interface RetrieveContextOptions {
   minSimilarity?: number;
 }
 
-/**
- * The single entry point every future AI agent should call before
- * answering a question. Embeds the query, finds the most relevant
- * chunks of this organization's uploaded knowledge, and returns them
- * both as structured data and as a ready-to-inject prompt block.
- *
- * Usage in an agent:
- *   const { promptBlock, chunks } = await retrieveContext({
- *     organizationId,
- *     query: userMessage,
- *   });
- *   // then include `promptBlock` in the system/context prompt before
- *   // calling the LLM, so it answers grounded in real company data.
- */
+interface MatchRow {
+  content: string;
+  title: string;
+  sourceType: string;
+  similarity: number;
+}
+
 export async function retrieveContext({
   organizationId,
   query,
@@ -50,7 +43,8 @@ export async function retrieveContext({
   });
   const queryEmbedding = embeddingResponse.data[0]!.embedding;
 
-  const { data: results, error } = await admin.rpc("match_knowledg
+  const { data: results, error } = await admin.rpc("match_knowledge_chunks", {
+    query_embedding: queryEmbedding,
     match_organization_id: organizationId,
     match_count: matchCount,
     match_category: category ?? null,
@@ -60,9 +54,11 @@ export async function retrieveContext({
     return { chunks: [], promptBlock: "" };
   }
 
-  const chunks: RetrievedChunk[] = results
-    .filter((r: { similarity: number }) => r.similarity >= minSimilarity)
-    .map((r: { content: string; title: string; sourceType: string; similarity: number }) => ({
+  const rows = results as MatchRow[];
+
+  const chunks: RetrievedChunk[] = rows
+    .filter((r) => r.similarity >= minSimilarity)
+    .map((r) => ({
       content: r.content,
       documentTitle: r.title,
       sourceType: r.sourceType,
@@ -76,9 +72,7 @@ export async function retrieveContext({
   const promptBlock = [
     "The following are relevant excerpts from this organization's knowledge base. Use them to ground your answer in the company's actual documented policies, contracts, and procedures. If the excerpts don't contain the answer, say so honestly rather than guessing.",
     "",
-    ...chunks.map(
-      (c, i) => `[Source ${i + 1}: "${c.documentTitle}"]\n${c.content}`
-    ),
+    ...chunks.map((c, i) => `[Source ${i + 1}: "${c.documentTitle}"]\n${c.content}`),
   ].join("\n\n");
 
   return { chunks, promptBlock };
