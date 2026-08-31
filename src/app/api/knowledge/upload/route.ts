@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getActiveOrganizationId } from "@/lib/active-org";
@@ -12,7 +13,7 @@ import {
 } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
 
-export const maxDuration = 300; // allow up to 5 minutes for large files
+export const maxDuration = 60;
 
 const TYPE_MAP: Record<string, string> = {
   "application/pdf": "pdf",
@@ -30,6 +31,60 @@ function resolveSourceType(mimeType: string): string | null {
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "audio";
   return null;
+}
+
+async function runExtractionAndProcessing(
+  admin: ReturnType<typeof createAdminClient>,
+  documentId: string,
+  organizationId: string,
+  sourceType: string,
+  buffer: Buffer,
+  file: File
+) {
+  let extractResult;
+  try {
+    switch (sourceType) {
+      case "pdf":
+        extractResult = await extractFromPdf(buffer);
+        break;
+      case "word":
+        extractResult = await extractFromWord(buffer);
+        break;
+      case "excel":
+        extractResult = await extractFromExcel(buffer);
+        break;
+      case "powerpoint":
+        extractResult = await extractFromPowerPoint(buffer);
+        break;
+      case "image":
+        extractResult = await extractFromImage(buffer, file.type);
+        break;
+      case "video":
+      case "audio":
+        await admin.from("knowledge_documents").update({ status: "TRANSCRIBING" }).eq("id", documentId);
+        extractResult = await extractFromAudioOrVideo(file);
+        break;
+      default:
+        extractResult = { error: "Unsupported type" };
+    }
+  } catch (err) {
+    extractResult = { error: err instanceof Error ? err.message : "Extraction failed" };
+  }
+
+  if ("error" in extractResult) {
+    await admin
+      .from("knowledge_documents")
+      .update({ status: "FAILED", errorMessage: extractResult.error })
+      .eq("id", documentId);
+    return;
+  }
+
+  await processDocument({
+    documentId,
+    organizationId,
+    rawText: extractResult.text,
+    extraMetadata: { originalFilename: file.name, sourceType },
+  });
 }
 
 export async function POST(request: Request) {
@@ -97,53 +152,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: docError?.message ?? "Couldn't create document record" }, { status: 500 });
   }
 
-  // Extract text based on file type. This runs synchronously within the
-  // request — fine for typical business documents, but very large files
-  // may need a background job in a future iteration.
-  let extractResult;
-  switch (sourceType) {
-    case "pdf":
-      extractResult = await extractFromPdf(buffer);
-      break;
-    case "word":
-      extractResult = await extractFromWord(buffer);
-      break;
-    case "excel":
-      extractResult = await extractFromExcel(buffer);
-      break;
-    case "powerpoint":
-      extractResult = await extractFromPowerPoint(buffer);
-      break;
-    case "image":
-      extractResult = await extractFromImage(buffer, file.type);
-      break;
-    case "video":
-    case "audio":
-      await admin.from("knowledge_documents").update({ status: "TRANSCRIBING" }).eq("id", doc.id);
-      extractResult = await extractFromAudioOrVideo(file);
-      break;
-    default:
-      extractResult = { error: "Unsupported type" };
-  }
+  // Respond immediately — actual extraction/embedding continues in the
+  // background via `after()`, so the client isn't blocked waiting on a
+  // slow pipeline that could exceed the function's execution limit.
+  after(() => runExtractionAndProcessing(admin, doc.id, organizationId, sourceType, buffer, file));
 
-  if ("error" in extractResult) {
-    await admin
-      .from("knowledge_documents")
-      .update({ status: "FAILED", errorMessage: extractResult.error })
-      .eq("id", doc.id);
-    return NextResponse.json({ error: extractResult.error, documentId: doc.id }, { status: 500 });
-  }
-
-  const result = await processDocument({
-    documentId: doc.id,
-    organizationId,
-    rawText: extractResult.text,
-    extraMetadata: { originalFilename: file.name, category, sourceType },
-  });
-
-  if (!result.success) {
-    return NextResponse.json({ error: result.error, documentId: doc.id }, { status: 500 });
-  }
-
-  return NextResponse.json({ documentId: doc.id, status: "READY" });
+  return NextResponse.json({ documentId: doc.id, status: "EXTRACTING" });
 }
