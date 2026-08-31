@@ -33,60 +33,6 @@ function resolveSourceType(mimeType: string): string | null {
   return null;
 }
 
-async function runExtractionAndProcessing(
-  admin: ReturnType<typeof createAdminClient>,
-  documentId: string,
-  organizationId: string,
-  sourceType: string,
-  buffer: Buffer,
-  file: File
-) {
-  let extractResult;
-  try {
-    switch (sourceType) {
-      case "pdf":
-        extractResult = await extractFromPdf(buffer);
-        break;
-      case "word":
-        extractResult = await extractFromWord(buffer);
-        break;
-      case "excel":
-        extractResult = await extractFromExcel(buffer);
-        break;
-      case "powerpoint":
-        extractResult = await extractFromPowerPoint(buffer);
-        break;
-      case "image":
-        extractResult = await extractFromImage(buffer, file.type);
-        break;
-      case "video":
-      case "audio":
-        await admin.from("knowledge_documents").update({ status: "TRANSCRIBING" }).eq("id", documentId);
-        extractResult = await extractFromAudioOrVideo(file);
-        break;
-      default:
-        extractResult = { error: "Unsupported type" };
-    }
-  } catch (err) {
-    extractResult = { error: err instanceof Error ? err.message : "Extraction failed" };
-  }
-
-  if ("error" in extractResult) {
-    await admin
-      .from("knowledge_documents")
-      .update({ status: "FAILED", errorMessage: extractResult.error })
-      .eq("id", documentId);
-    return;
-  }
-
-  await processDocument({
-    documentId,
-    organizationId,
-    rawText: extractResult.text,
-    extraMetadata: { originalFilename: file.name, sourceType },
-  });
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -152,10 +98,59 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: docError?.message ?? "Couldn't create document record" }, { status: 500 });
   }
 
-  // Respond immediately — actual extraction/embedding continues in the
-  // background via `after()`, so the client isn't blocked waiting on a
-  // slow pipeline that could exceed the function's execution limit.
-  after(() => runExtractionAndProcessing(admin, doc.id, organizationId, sourceType, buffer, file));
+  const documentId = doc.id as string;
 
-  return NextResponse.json({ documentId: doc.id, status: "EXTRACTING" });
-}
+  // Closure over the variables above — avoids passing the Supabase admin
+  // client as a typed function parameter, which triggers a generic-type
+  // mismatch under this project's strict TypeScript settings.
+  async function runExtractionAndProcessing() {
+    let extractResult;
+    try {
+      switch (sourceType) {
+        case "pdf":
+          extractResult = await extractFromPdf(buffer);
+          break;
+        case "word":
+          extractResult = await extractFromWord(buffer);
+          break;
+        case "excel":
+          extractResult = await extractFromExcel(buffer);
+          break;
+        case "powerpoint":
+          extractResult = await extractFromPowerPoint(buffer);
+          break;
+        case "image":
+          extractResult = await extractFromImage(buffer, file!.type);
+          break;
+        case "video":
+        case "audio":
+          await admin.from("knowledge_documents").update({ status: "TRANSCRIBING" }).eq("id", documentId);
+          extractResult = await extractFromAudioOrVideo(file!);
+          break;
+        default:
+          extractResult = { error: "Unsupported type" };
+      }
+    } catch (err) {
+      extractResult = { error: err instanceof Error ? err.message : "Extraction failed" };
+    }
+
+    if ("error" in extractResult) {
+      await admin
+        .from("knowledge_documents")
+        .update({ status: "FAILED", errorMessage: extractResult.error })
+        .eq("id", documentId);
+      return;
+    }
+
+    await processDocument({
+      documentId,
+      organizationId: organizationId as string,
+      rawText: extractResult.text,
+      extraMetadata: { originalFilename: file!.name, sourceType },
+    });
+  }
+
+  after(() => runExtractionAndProcessing());
+
+  return NextResponse.json({ documentId, status: "EXTRACTING" });
+  }
