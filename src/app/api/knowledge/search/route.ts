@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     model: "text-embedding-3-small",
     input: query,
   });
-  const queryEmbedding = embeddingResponse.data[0].embedding;
+  const queryEmbedding = embeddingResponse.data[0]!.embedding;
 
   const { data: results, error } = await supabase.rpc("match_knowledge_chunks", {
     query_embedding: queryEmbedding,
