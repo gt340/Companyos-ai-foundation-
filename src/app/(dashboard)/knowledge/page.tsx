@@ -42,6 +42,12 @@ interface KnowledgeDoc {
   createdAt: string;
 }
 
+interface UploadingFile {
+  id: string;
+  name: string;
+  progress: number;
+}
+
 const sourceIcons: Record<string, React.ElementType> = {
   pdf: FileText,
   word: FileText,
@@ -72,12 +78,45 @@ const categories = [
   { value: "training", label: "Training" },
 ];
 
+function uploadWithProgress(file: File, category: string, onProgress: (pct: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", category);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body?.error ?? `Upload failed (${xhr.status})`));
+        } catch {
+          reject(new Error(`Upload failed (${xhr.status})`));
+        }
+      }
+    });
+
+    xhr.addEventListener("error", () => reject(new Error("Network error during upload")));
+
+    xhr.open("POST", "/api/knowledge/upload");
+    xhr.send(formData);
+  });
+}
+
 export default function KnowledgeBasePage() {
   const { toast } = useToast();
   const [docs, setDocs] = React.useState<KnowledgeDoc[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [dragActive, setDragActive] = React.useState(false);
-  const [uploading, setUploading] = React.useState(false);
+  const [uploadingFiles, setUploadingFiles] = React.useState<UploadingFile[]>([]);
   const [category, setCategory] = React.useState("general");
   const [urlInput, setUrlInput] = React.useState("");
   const [addingUrl, setAddingUrl] = React.useState(false);
@@ -95,8 +134,6 @@ export default function KnowledgeBasePage() {
 
   React.useEffect(() => {
     loadDocs();
-    // Poll while anything is still processing, so status updates live
-    // without the user needing to refresh manually.
     const interval = setInterval(() => {
       setDocs((current) => {
         const stillProcessing = current.some((d) => !["READY", "FAILED"].includes(d.status));
@@ -108,19 +145,33 @@ export default function KnowledgeBasePage() {
   }, [loadDocs]);
 
   async function uploadFiles(files: FileList | File[]) {
-    setUploading(true);
-    for (const file of Array.from(files)) {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("category", category);
+    const fileArray = Array.from(files);
+    const entries: UploadingFile[] = fileArray.map((f, i) => ({
+      id: `${Date.now()}-${i}`,
+      name: f.name,
+      progress: 0,
+    }));
+    setUploadingFiles((current) => [...current, ...entries]);
 
-      const res = await fetch("/api/knowledge/upload", { method: "POST", body: formData });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        toast({ variant: "destructive", title: `Couldn't process ${file.name}`, description: body?.error });
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i]!;
+      const entryId = entries[i]!.id;
+      try {
+        await uploadWithProgress(file, category, (pct) => {
+          setUploadingFiles((current) =>
+            current.map((u) => (u.id === entryId ? { ...u, progress: pct } : u))
+          );
+        });
+      } catch (err) {
+        toast({
+          variant: "destructive",
+          title: `Couldn't upload ${file.name}`,
+          description: err instanceof Error ? err.message : undefined,
+        });
+      } finally {
+        setUploadingFiles((current) => current.filter((u) => u.id !== entryId));
       }
     }
-    setUploading(false);
     loadDocs();
   }
 
@@ -141,7 +192,7 @@ export default function KnowledgeBasePage() {
     }
 
     setUrlInput("");
-    toast({ variant: "success", title: "Website added" });
+    toast({ variant: "success", title: "Website queued — it will appear below shortly" });
     loadDocs();
   }
 
@@ -216,18 +267,31 @@ export default function KnowledgeBasePage() {
               className="hidden"
               onChange={(e) => e.target.files && uploadFiles(e.target.files)}
             />
-            {uploading ? (
-              <Loader2 className="h-8 w-8 animate-spin text-signal" />
-            ) : (
-              <UploadCloud className="h-8 w-8 text-muted-foreground" />
-            )}
-            <p className="mt-3 text-sm font-medium">
-              {uploading ? "Uploading…" : "Drag files here, or tap to browse"}
-            </p>
+            <UploadCloud className="h-8 w-8 text-muted-foreground" />
+            <p className="mt-3 text-sm font-medium">Drag files here, or tap to browse</p>
             <p className="mt-1 text-xs text-muted-foreground">
               PDF, Word, Excel, PowerPoint, images, video, audio
             </p>
           </div>
+
+          {uploadingFiles.length > 0 && (
+            <div className="space-y-2">
+              {uploadingFiles.map((u) => (
+                <div key={u.id} className="space-y-1 rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="truncate font-medium">{u.name}</span>
+                    <span className="text-muted-foreground">{u.progress}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-signal transition-all"
+                      style={{ width: `${u.progress}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <Input
@@ -286,4 +350,4 @@ export default function KnowledgeBasePage() {
       </Card>
     </div>
   );
-}
+  }
