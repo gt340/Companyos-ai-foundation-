@@ -8,31 +8,6 @@ import { processDocument } from "@/lib/knowledge/process-document";
 
 export const maxDuration = 60;
 
-async function runUrlProcessing(
-  admin: ReturnType<typeof createAdminClient>,
-  documentId: string,
-  organizationId: string,
-  url: string,
-  category: string
-) {
-  const extractResult = await extractFromUrl(url);
-
-  if ("error" in extractResult) {
-    await admin
-      .from("knowledge_documents")
-      .update({ status: "FAILED", errorMessage: extractResult.error })
-      .eq("id", documentId);
-    return;
-  }
-
-  await processDocument({
-    documentId,
-    organizationId,
-    rawText: extractResult.text,
-    extraMetadata: { sourceUrl: url, category },
-  });
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -86,7 +61,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: docError?.message ?? "Couldn't create document record" }, { status: 500 });
   }
 
-  after(() => runUrlProcessing(admin, doc.id, organizationId, url, category));
+  const documentId = doc.id as string;
 
-  return NextResponse.json({ documentId: doc.id, status: "EXTRACTING" });
+  // Closure over the variables above — matches the pattern used in
+  // upload/route.ts, avoiding a generic-type mismatch that occurs when
+  // the Supabase admin client is passed as an explicitly-typed parameter.
+  async function runUrlProcessing() {
+    const extractResult = await extractFromUrl(url!);
+
+    if ("error" in extractResult) {
+      await admin
+        .from("knowledge_documents")
+        .update({ status: "FAILED", errorMessage: extractResult.error })
+        .eq("id", documentId);
+      return;
     }
+
+    await processDocument({
+      documentId,
+      organizationId: organizationId as string,
+      rawText: extractResult.text,
+      extraMetadata: { sourceUrl: url, category },
+    });
+  }
+
+  after(() => runUrlProcessing());
+
+  return NextResponse.json({ documentId, status: "EXTRACTING" });
+      }
