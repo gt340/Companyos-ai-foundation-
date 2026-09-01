@@ -11,7 +11,7 @@ export async function extractFromPdf(buffer: Buffer): Promise<ExtractResult> {
   try {
     // Lazy-imported because pdf-parse touches the filesystem on module load
     // in a way that's awkward in some serverless bundlers.
-    const pdfParse = (await import("pdf-parse")).default;
+    const pdfParse = (await import("pdf-parse/lib/pdf-parse.js")).default;
     const result = await pdfParse(buffer);
     return { text: result.text };
   } catch (err) {
