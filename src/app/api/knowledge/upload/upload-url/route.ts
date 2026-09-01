@@ -9,6 +9,7 @@ import { processDocument } from "@/lib/knowledge/process-document";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+ try {
   const supabase = await createClient();
   const {
     data: { user },
@@ -88,4 +89,10 @@ export async function POST(request: Request) {
   after(() => runUrlProcessing());
 
   return NextResponse.json({ documentId, status: "EXTRACTING" });
-      }
+ } catch (err) {
+  return NextResponse.json(
+    { error: err instanceof Error ? err.message : "Unexpected server error" },
+    { status: 500 }
+  );
+ }
+}
