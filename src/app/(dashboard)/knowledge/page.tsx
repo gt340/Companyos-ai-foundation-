@@ -15,6 +15,7 @@ import {
   XCircle,
   Trash2,
   Search,
+  ExternalLink,
 } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -39,6 +40,7 @@ interface KnowledgeDoc {
   status: string;
   errorMessage: string | null;
   chunkCount: number;
+  viewUrl: string | null;
   createdAt: string;
 }
 
@@ -326,7 +328,19 @@ export default function KnowledgeBasePage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{doc.title}</p>
+                      {doc.viewUrl ? (
+                        <a
+                          href={doc.viewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 truncate text-sm font-medium text-signal hover:underline"
+                        >
+                          <span className="truncate">{doc.title}</span>
+                          <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                      ) : (
+                        <p className="truncate text-sm font-medium">{doc.title}</p>
+                      )}
                       <p className="text-xs text-muted-foreground">
                         {doc.category} · {doc.chunkCount} chunk{doc.chunkCount !== 1 ? "s" : ""}
                         {doc.errorMessage && ` · ${doc.errorMessage}`}
