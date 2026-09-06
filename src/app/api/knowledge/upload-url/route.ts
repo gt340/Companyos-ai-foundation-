@@ -37,6 +37,30 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
+  // Duplicate guard: skip re-processing if this exact URL is already
+  // indexed (or currently being indexed) for this organization.
+  const { data: existing } = await admin
+    .from("knowledge_documents")
+    .select("id, status")
+    .eq("organizationId", organizationId)
+    .eq("sourceUrl", url)
+    .in("status", ["READY", "PENDING", "EXTRACTING", "CHUNKING", "EMBEDDING"])
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json(
+      {
+        error:
+          existing.status === "READY"
+            ? "This URL is already in your knowledge base."
+            : "This URL is already being processed.",
+        documentId: existing.id,
+        status: existing.status,
+      },
+      { status: 409 }
+    );
+  }
+
   let title: string;
   try {
     title = new URL(url).hostname;
@@ -95,4 +119,4 @@ export async function POST(request: Request) {
     { status: 500 }
   );
  }
-                             }
+}
