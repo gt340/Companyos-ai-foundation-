@@ -66,6 +66,30 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
+  // Duplicate guard: skip re-processing if a file with this exact name
+  // is already indexed (or currently being indexed) for this organization.
+  const { data: existing } = await admin
+    .from("knowledge_documents")
+    .select("id, status")
+    .eq("organizationId", organizationId)
+    .eq("originalFilename", file.name)
+    .in("status", ["READY", "PENDING", "EXTRACTING", "TRANSCRIBING", "CHUNKING", "EMBEDDING"])
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json(
+      {
+        error:
+          existing.status === "READY"
+            ? `"${file.name}" is already in your knowledge base.`
+            : `"${file.name}" is already being processed.`,
+        documentId: existing.id,
+        status: existing.status,
+      },
+      { status: 409 }
+    );
+  }
+
   const storagePath = `${organizationId}/${Date.now()}-${file.name}`;
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
@@ -153,4 +177,4 @@ export async function POST(request: Request) {
   after(() => runExtractionAndProcessing());
 
   return NextResponse.json({ documentId, status: "EXTRACTING" });
-  }
+}
