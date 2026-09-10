@@ -1,0 +1,302 @@
+// src/app/(dashboard)/assistant/page.tsx
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Loader2, Send, Check, X } from "lucide-react";
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+interface PendingAction {
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
+function describeAction(tool: string, args: Record<string, unknown>): string {
+  switch (tool) {
+    case "invite_member":
+      return `Invite ${args.email} as ${args.role}`;
+    case "update_organization_name":
+      return `Update organization${args.name ? ` name to "${args.name}"` : ""}${
+        args.slug ? `, slug to "${args.slug}"` : ""
+      }`;
+    case "update_security_settings":
+      return `Set "require 2FA for all members" to ${String(args.require2FA)}`;
+    case "update_notification_settings":
+      return "Update organization notification settings";
+    case "update_profile":
+      return `Update your display name to "${args.name}"`;
+    case "create_knowledge_document":
+      return `Add "${args.url}" to the knowledge base`;
+    case "delete_knowledge_document":
+      return `Delete knowledge base document ${args.documentId}`;
+    default:
+      return `Run ${tool}`;
+  }
+}
+
+export default function AssistantPage() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [streamingText, setStreamingText] = useState("");
+  const [statusLine, setStatusLine] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null
+  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, streamingText, pendingAction]);
+
+  async function sendMessage(history: ChatMessage[]) {
+    setIsLoading(true);
+    setStreamingText("");
+    setStatusLine(null);
+    setPendingAction(null);
+
+    const res = await fetch("/api/assistant/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+    });
+
+    if (!res.body) {
+      setIsLoading(false);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let assistantText = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+
+      for (const chunk of chunks) {
+        const line = chunk.trim();
+        if (!line.startsWith("data:")) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) continue;
+
+        let event: any;
+        try {
+          event = JSON.parse(jsonStr);
+        } catch {
+          continue;
+        }
+
+        switch (event.type) {
+          case "text":
+            assistantText += event.content;
+            setStreamingText(assistantText);
+            break;
+          case "tool_call":
+            setStatusLine(`Looking up ${formatToolLabel(event.name)}…`);
+            break;
+          case "tool_result":
+            setStatusLine(null);
+            break;
+          case "tool_error":
+            setStatusLine(`Couldn't complete ${formatToolLabel(event.name)}`);
+            break;
+          case "action_proposal":
+            setPendingAction({
+              tool: event.tool,
+              arguments: event.arguments,
+            });
+            break;
+          case "error":
+            assistantText +=
+              (assistantText ? "\n\n" : "") + `Error: ${event.message}`;
+            setStreamingText(assistantText);
+            break;
+          case "done":
+            break;
+        }
+      }
+    }
+
+    setIsLoading(false);
+    setStatusLine(null);
+    if (assistantText) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: assistantText },
+      ]);
+      setStreamingText("");
+    }
+  }
+
+  function handleSend() {
+    const trimmed = input.trim();
+    if (!trimmed || isLoading) return;
+
+    const nextHistory: ChatMessage[] = [
+      ...messages,
+      { role: "user", content: trimmed },
+    ];
+    setMessages(nextHistory);
+    setInput("");
+    sendMessage(nextHistory);
+  }
+
+  async function handleConfirm() {
+    if (!pendingAction) return;
+    setConfirming(true);
+
+    try {
+      const res = await fetch("/api/assistant/execute-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pendingAction),
+      });
+      const data = await res.json();
+
+      const summary = describeAction(
+        pendingAction.tool,
+        pendingAction.arguments
+      );
+
+      const note: ChatMessage = {
+        role: "assistant",
+        content: data.success
+          ? `✅ Done: ${summary}`
+          : `❌ Couldn't complete "${summary}": ${data.error}`,
+      };
+
+      setMessages((prev) => [...prev, note]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "❌ Something went wrong running that action." },
+      ]);
+    } finally {
+      setPendingAction(null);
+      setConfirming(false);
+    }
+  }
+
+  function handleCancel() {
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "Action cancelled." },
+    ]);
+    setPendingAction(null);
+  }
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-2xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+        {messages.length === 0 && !streamingText && (
+          <p className="text-muted-foreground text-sm text-center mt-12">
+            Ask me about your organization, members, activity, or company
+            knowledge base — or ask me to make a change.
+          </p>
+        )}
+
+        {messages.map((m, i) => (
+          <div
+            key={i}
+            className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+          >
+            <div
+              className={`rounded-lg px-4 py-2 max-w-[85%] whitespace-pre-wrap text-sm ${
+                m.role === "user"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted"
+              }`}
+            >
+              {m.content}
+            </div>
+          </div>
+        ))}
+
+        {streamingText && (
+          <div className="flex justify-start">
+            <div className="rounded-lg px-4 py-2 max-w-[85%] whitespace-pre-wrap text-sm bg-muted">
+              {streamingText}
+            </div>
+          </div>
+        )}
+
+        {statusLine && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground pl-2">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {statusLine}
+          </div>
+        )}
+
+        {pendingAction && (
+          <Card className="p-4 border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+            <p className="text-sm font-medium mb-3">
+              {describeAction(pendingAction.tool, pendingAction.arguments)}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleConfirm}
+                disabled={confirming}
+              >
+                {confirming ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                ) : (
+                  <Check className="h-4 w-4 mr-1" />
+                )}
+                Confirm
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCancel}
+                disabled={confirming}
+              >
+                <X className="h-4 w-4 mr-1" />
+                Cancel
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        <div ref={scrollRef} />
+      </div>
+
+      <div className="border-t p-4 flex gap-2">
+        <Input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSend()}
+          placeholder="Ask the assistant…"
+          disabled={isLoading || !!pendingAction}
+        />
+        <Button
+          onClick={handleSend}
+          disabled={isLoading || !!pendingAction || !input.trim()}
+        >
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function formatToolLabel(name: string): string {
+  return name.replace(/_/g, " ");
+}
