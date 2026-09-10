@@ -86,7 +86,6 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     mutating: false,
     parameters: { type: "object", properties: {} },
   },
-  },
   {
     name: "get_organization_settings",
     description:
@@ -114,7 +113,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         },
         role: {
           type: "string",
-          description: "Role to assign: 'admin' or 'member'.",
+          description: "Role to assign: 'admin', 'member', or 'viewer'.",
         },
       },
       required: ["email", "role"],
