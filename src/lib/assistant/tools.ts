@@ -82,12 +82,10 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "get_notifications",
     description:
-      "Get the current user's notification settings for this organization.",
+      "Get the current user's recent notifications for this organization, including unread count.",
     mutating: false,
-    parameters: {
-      type: "object",
-      properties: {},
-    },
+    parameters: { type: "object", properties: {} },
+  },
   },
   {
     name: "get_organization_settings",
@@ -157,13 +155,14 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   },
   {
     name: "update_notification_settings",
-    description: "Update the current user's notification preferences.",
+    description:
+      "Update organization-wide notification settings (whether to notify on new members or billing events).",
     mutating: true,
     parameters: {
       type: "object",
       properties: {
-        emailNotifications: { type: "boolean" },
-        activityDigest: { type: "boolean" },
+        notifyOnNewMember: { type: "boolean" },
+        notifyOnBillingEvents: { type: "boolean" },
       },
     },
   },
