@@ -198,6 +198,48 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
   {
+    name: "create_document_draft",
+    description:
+      "Write and add a new knowledge base document by generating its full text content directly (not from a URL or file — for that use create_knowledge_document). Use this when the user asks the assistant to draft a policy, training material, or any other document from scratch.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Title of the document." },
+        content: {
+          type: "string",
+          description: "The full document text to save.",
+        },
+        category: {
+          type: "string",
+          description:
+            "Category: 'general', 'policy', 'contract', 'invoice', 'manual', or 'training'.",
+        },
+      },
+      required: ["title", "content", "category"],
+    },
+  },
+  {
+    name: "update_document_content",
+    description:
+      "Replace the full text content of an existing knowledge base document with new AI-written or AI-edited content. This overwrites the document — there is no version history, so the old content cannot be recovered after this runs.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        documentId: {
+          type: "string",
+          description: "ID of the document to update.",
+        },
+        content: {
+          type: "string",
+          description: "The new full document text, replacing the old content entirely.",
+        },
+      },
+      required: ["documentId", "content"],
+    },
+  },
+  {
     name: "delete_knowledge_document",
     description: "Delete a knowledge base document by its ID.",
     mutating: true,
