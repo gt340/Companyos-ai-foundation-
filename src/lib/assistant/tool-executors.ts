@@ -14,6 +14,66 @@ interface ExecutorContext {
   userId: string;
 }
 
+// ── SHARED CHUNKING/EMBEDDING HELPER ────────────────────────────────────
+// Mirrors the chunking approach used elsewhere in the knowledge base
+// pipeline (~1000 chars, 150 overlap, breaking on paragraph/sentence
+// boundaries where possible) so AI-drafted docs are searchable the same
+// way as uploaded ones.
+
+function chunkText(text: string, chunkSize = 1000, overlap = 150): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    let end = Math.min(start + chunkSize, text.length);
+
+    if (end < text.length) {
+      const paragraphBreak = text.lastIndexOf("\n\n", end);
+      const sentenceBreak = text.lastIndexOf(". ", end);
+      if (paragraphBreak > start + chunkSize * 0.5) {
+        end = paragraphBreak;
+      } else if (sentenceBreak > start + chunkSize * 0.5) {
+        end = sentenceBreak + 1;
+      }
+    }
+
+    chunks.push(text.slice(start, end).trim());
+    start = end - overlap;
+    if (start < 0 || end >= text.length) break;
+  }
+
+  return chunks.filter((c) => c.length > 0);
+}
+
+async function embedAndStoreChunks(
+  text: string,
+  documentId: string,
+  organizationId: string
+): Promise<number> {
+  const supabase = await createClient();
+  const chunks = chunkText(text);
+
+  for (let i = 0; i < chunks.length; i++) {
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: chunks[i],
+    });
+    const embedding = embeddingResponse.data[0]!.embedding;
+
+    const { error } = await supabase.from("knowledge_chunks").insert({
+      documentId,
+      organizationId,
+      chunkIndex: i,
+      content: chunks[i],
+      embedding,
+    });
+
+    if (error) throw new Error(`Failed to store chunk ${i}: ${error.message}`);
+  }
+
+  return chunks.length;
+}
+
 // ── READ-ONLY EXECUTORS ───────────────────────────────────────────────
 
 async function searchKnowledgeBase(
@@ -216,6 +276,90 @@ async function createKnowledgeDocument(
   return data;
 }
 
+async function createDocumentDraft(
+  args: { title: string; content: string; category: string },
+  ctx: ExecutorContext
+) {
+  const supabase = await createClient();
+  const { data: doc, error } = await supabase
+    .from("knowledge_documents")
+    .insert({
+      organizationId: ctx.organizationId,
+      uploadedBy: ctx.userId,
+      title: args.title,
+      sourceType: "AI_DRAFT",
+      category: args.category,
+      status: "READY",
+      extractedText: args.content,
+      chunkCount: 0,
+    })
+    .select()
+    .single();
+
+  if (error)
+    throw new Error(`Failed to create document draft: ${error.message}`);
+
+  const chunkCount = await embedAndStoreChunks(
+    args.content,
+    doc.id,
+    ctx.organizationId
+  );
+
+  await supabase
+    .from("knowledge_documents")
+    .update({ chunkCount })
+    .eq("id", doc.id);
+
+  return { ...doc, chunkCount };
+}
+
+async function updateDocumentContent(
+  args: { documentId: string; content: string },
+  ctx: ExecutorContext
+) {
+  const supabase = await createClient();
+
+  const { data: existing, error: fetchError } = await supabase
+    .from("knowledge_documents")
+    .select("id")
+    .eq("id", args.documentId)
+    .eq("organizationId", ctx.organizationId)
+    .single();
+
+  if (fetchError || !existing)
+    throw new Error("Document not found in this organization.");
+
+  const { error: deleteError } = await supabase
+    .from("knowledge_chunks")
+    .delete()
+    .eq("documentId", args.documentId);
+
+  if (deleteError)
+    throw new Error(`Failed to clear old chunks: ${deleteError.message}`);
+
+  const chunkCount = await embedAndStoreChunks(
+    args.content,
+    args.documentId,
+    ctx.organizationId
+  );
+
+  const { data: updated, error: updateError } = await supabase
+    .from("knowledge_documents")
+    .update({
+      extractedText: args.content,
+      chunkCount,
+      updatedAt: new Date().toISOString(),
+    })
+    .eq("id", args.documentId)
+    .select()
+    .single();
+
+  if (updateError)
+    throw new Error(`Failed to update document: ${updateError.message}`);
+
+  return updated;
+}
+
 async function deleteKnowledgeDocument(
   args: { documentId: string },
   ctx: ExecutorContext
@@ -250,6 +394,8 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   update_notification_settings: updateNotificationSettings,
   update_profile: updateProfile,
   create_knowledge_document: createKnowledgeDocument,
+  create_document_draft: createDocumentDraft,
+  update_document_content: updateDocumentContent,
   delete_knowledge_document: deleteKnowledgeDocument,
 };
 
