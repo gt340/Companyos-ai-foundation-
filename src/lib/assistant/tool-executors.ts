@@ -97,26 +97,6 @@ async function embedAndStoreChunks(
   return chunks.length;
 }
 
-async function generateImage(args: { prompt: string; size?: string }) {
-  const validSizes = ["1024x1024", "1792x1024", "1024x1792"] as const;
-  const size = validSizes.includes(args.size as typeof validSizes[number])
-    ? (args.size as typeof validSizes[number])
-    : "1024x1024";
-
-  const response = await openai.images.generate({
-    model: "dall-e-3",
-    prompt: args.prompt,
-    size,
-    n: 1,
-    response_format: "url",
-  });
-
-  const image = response.data?.[0];
-  if (!image?.url) throw new Error("Image generation failed — no image returned.");
-
-  return { url: image.url, revisedPrompt: image.revised_prompt ?? args.prompt };
-    }
-
 // ── READ-ONLY EXECUTORS ───────────────────────────────────────────────
 
 async function searchKnowledgeBase(
@@ -215,6 +195,26 @@ async function getOrganizationSettings(_args: unknown, ctx: ExecutorContext) {
     include: { settings: true },
   });
   return org;
+}
+
+async function generateImage(args: { prompt: string; size?: string }) {
+  const validSizes = ["1024x1024", "1792x1024", "1024x1792"] as const;
+  const size = validSizes.includes(args.size as typeof validSizes[number])
+    ? (args.size as typeof validSizes[number])
+    : "1024x1024";
+
+  const response = await openai.images.generate({
+    model: "dall-e-3",
+    prompt: args.prompt,
+    size,
+    n: 1,
+    response_format: "url",
+  });
+
+  const image = response.data?.[0];
+  if (!image?.url) throw new Error("Image generation failed — no image returned.");
+
+  return { url: image.url, revisedPrompt: image.revised_prompt ?? args.prompt };
 }
 
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
@@ -390,7 +390,7 @@ async function updateDocumentContent(
     .from("knowledge_documents")
     .update({
       extractedText: args.content,
-      chunkCount,
+      content: chunks[i]!,
       updatedAt: new Date().toISOString(),
     })
     .eq("id", args.documentId)
@@ -432,7 +432,6 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   get_activity_logs: getActivityLogs,
   get_notifications: getNotifications,
   get_organization_settings: getOrganizationSettings,
-  generate_image: generateImage,
   invite_member: inviteMember,
   update_organization_name: updateOrganizationName,
   update_security_settings: updateSecuritySettings,
@@ -476,4 +475,4 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   if (!membership) throw new Error("Not a member of this organization");
 
   return { organizationId, userId: user.id, role: membership.role.key };
-        }
+}
