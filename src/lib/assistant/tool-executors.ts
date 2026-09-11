@@ -430,6 +430,7 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   get_activity_logs: getActivityLogs,
   get_notifications: getNotifications,
   get_organization_settings: getOrganizationSettings,
+  generate_image: generateImage,
   invite_member: inviteMember,
   update_organization_name: updateOrganizationName,
   update_security_settings: updateSecuritySettings,
