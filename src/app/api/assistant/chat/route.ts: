@@ -24,12 +24,12 @@ interface ClientMessage {
 }
 
 function encodeEvent(event: Record<string, unknown>): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(event) + "\n");
+  return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-const SYSTEM_PROMPT = `You are the Company Assistant inside CompanyOS AI, embedded in a real organization's workspace. You have tools to look up information (members, activity logs, notifications, organization settings, and the company's knowledge base) and tools to take actions (inviting members, updating settings, updating the user's profile, and managing knowledge base documents).
+const SYSTEM_PROMPT = `You are the Company Assistant inside CompanyOS AI, embedded in a real organization's workspace. You have tools to look up information (members, activity logs, notifications, organization settings, and the company's knowledge base), tools to take actions (inviting members, updating settings, updating the user's profile, managing knowledge base documents), and a tool to generate images (posters, banners, illustrations).
 
-Always search the knowledge base before answering questions that might be covered by company documents. Read-only tools run automatically. When you want to take an action that changes data, call the corresponding tool — the system will show the user a confirmation card before anything actually happens, so you do not need to ask permission in words first, just call the tool.`;
+Always search the knowledge base before answering questions that might be covered by company documents. Read-only tools (including image generation) run automatically. When you want to take an action that changes company data, call the corresponding tool — the system will show the user a confirmation card before anything actually happens, so you do not need to ask permission in words first, just call the tool.`;
 
 export async function POST(req: Request) {
   let ctx;
@@ -72,7 +72,6 @@ export async function POST(req: Request) {
           let assistantText = "";
           let finishReason: string | null = null;
 
-          // Accumulate streamed tool call deltas by index.
           const toolCallAccum: Record<
             number,
             { id: string; name: string; args: string }
@@ -86,7 +85,7 @@ export async function POST(req: Request) {
             if (delta?.content) {
               assistantText += delta.content;
               controller.enqueue(
-                encodeEvent({ type: "text-delta", content: delta.content })
+                encodeEvent({ type: "text", content: delta.content })
               );
             }
 
@@ -107,14 +106,12 @@ export async function POST(req: Request) {
 
           const toolCalls = Object.values(toolCallAccum);
 
-          // No tool calls this turn — model gave a final answer, we're done.
           if (toolCalls.length === 0 || finishReason !== "tool_calls") {
             controller.enqueue(encodeEvent({ type: "done" }));
             controller.close();
             return;
           }
 
-          // Record the assistant's tool-call message in the running history.
           messages.push({
             role: "assistant",
             content: assistantText || null,
@@ -125,7 +122,6 @@ export async function POST(req: Request) {
             })),
           });
 
-          // Find the first mutating call in this batch, if any.
           const mutatingCall = toolCalls.find(
             (tc) => !READ_ONLY_TOOL_NAMES.includes(tc.name)
           );
@@ -139,9 +135,9 @@ export async function POST(req: Request) {
             }
             controller.enqueue(
               encodeEvent({
-                type: "proposed-action",
-                name: mutatingCall.name,
-                args: parsedArgs,
+                type: "action_proposal",
+                tool: mutatingCall.name,
+                arguments: parsedArgs,
               })
             );
             controller.enqueue(encodeEvent({ type: "done" }));
@@ -149,8 +145,8 @@ export async function POST(req: Request) {
             return;
           }
 
-          // All calls in this batch are read-only — execute each and feed
-          // the results back in, then loop to let the model continue.
+          // All calls in this batch are read-only (this includes
+          // generate_image) — execute each and feed results back in.
           for (const tc of toolCalls) {
             let parsedArgs: unknown = {};
             try {
@@ -160,19 +156,27 @@ export async function POST(req: Request) {
             }
 
             controller.enqueue(
-              encodeEvent({ type: "tool-call", name: tc.name, args: parsedArgs })
+              encodeEvent({ type: "tool_call", name: tc.name, args: parsedArgs })
             );
 
             let result: unknown;
+            let toolError: string | null = null;
             try {
               result = await executeTool(tc.name, parsedArgs, ctx);
             } catch (err) {
-              result = { error: (err as Error).message };
+              toolError = (err as Error).message;
+              result = { error: toolError };
             }
 
-            controller.enqueue(
-              encodeEvent({ type: "tool-result", name: tc.name, result })
-            );
+            if (toolError) {
+              controller.enqueue(
+                encodeEvent({ type: "tool_error", name: tc.name, message: toolError })
+              );
+            } else {
+              controller.enqueue(
+                encodeEvent({ type: "tool_result", name: tc.name, result })
+              );
+            }
 
             messages.push({
               role: "tool",
@@ -183,7 +187,6 @@ export async function POST(req: Request) {
           // loop continues — next iteration re-calls OpenAI with tool results in context
         }
 
-        // Hit the iteration cap without a final answer.
         controller.enqueue(
           encodeEvent({
             type: "error",
@@ -203,8 +206,9 @@ export async function POST(req: Request) {
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "application/x-ndjson",
+      "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
+      Connection: "keep-alive",
     },
   });
 }
