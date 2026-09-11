@@ -59,9 +59,11 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true, result });
   } catch (err) {
+    const message = (err as Error).message;
+    const isPermissionError = message.startsWith("You don't have permission");
     return NextResponse.json(
-      { success: false, error: (err as Error).message },
-      { status: 500 }
+      { success: false, error: message },
+      { status: isPermissionError ? 403 : 500 }
     );
   }
       }
