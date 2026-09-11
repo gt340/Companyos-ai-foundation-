@@ -10,6 +10,7 @@ import { Loader2, Send, Check, X } from "lucide-react";
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string;
 }
 
 interface PendingAction {
@@ -33,6 +34,10 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `Update your display name to "${args.name}"`;
     case "create_knowledge_document":
       return `Add "${args.url}" to the knowledge base`;
+    case "create_document_draft":
+      return `Create document "${args.title}" (${args.category})`;
+    case "update_document_content":
+      return `Update document ${args.documentId} with new content`;
     case "delete_knowledge_document":
       return `Delete knowledge base document ${args.documentId}`;
     default:
@@ -65,7 +70,9 @@ export default function AssistantPage() {
     const res = await fetch("/api/assistant/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({
+        messages: history.map((m) => ({ role: m.role, content: m.content })),
+      }),
     });
 
     if (!res.body) {
@@ -106,10 +113,34 @@ export default function AssistantPage() {
             setStreamingText(assistantText);
             break;
           case "tool_call":
-            setStatusLine(`Looking up ${formatToolLabel(event.name)}…`);
+            setStatusLine(
+              event.name === "generate_image"
+                ? "Generating image…"
+                : `Looking up ${formatToolLabel(event.name)}…`
+            );
             break;
           case "tool_result":
             setStatusLine(null);
+            if (event.name === "generate_image" && event.result?.url) {
+              // Flush any streamed text so far as its own bubble first,
+              // so the image lands after it in reading order.
+              if (assistantText) {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "assistant", content: assistantText },
+                ]);
+                assistantText = "";
+                setStreamingText("");
+              }
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: "assistant",
+                  content: "",
+                  imageUrl: event.result.url,
+                },
+              ]);
+            }
             break;
           case "tool_error":
             setStatusLine(`Couldn't complete ${formatToolLabel(event.name)}`);
@@ -180,7 +211,7 @@ export default function AssistantPage() {
       };
 
       setMessages((prev) => [...prev, note]);
-    } catch (err) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "❌ Something went wrong running that action." },
@@ -214,15 +245,23 @@ export default function AssistantPage() {
             key={i}
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
-            <div
-              className={`rounded-lg px-4 py-2 max-w-[85%] whitespace-pre-wrap text-sm ${
-                m.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted"
-              }`}
-            >
-              {m.content}
-            </div>
+            {m.imageUrl ? (
+              <img
+                src={m.imageUrl}
+                alt="Generated"
+                className="rounded-lg max-w-[85%] border"
+              />
+            ) : (
+              <div
+                className={`rounded-lg px-4 py-2 max-w-[85%] whitespace-pre-wrap text-sm ${
+                  m.role === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted"
+                }`}
+              >
+                {m.content}
+              </div>
+            )}
           </div>
         ))}
 
@@ -247,11 +286,7 @@ export default function AssistantPage() {
               {describeAction(pendingAction.tool, pendingAction.arguments)}
             </p>
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleConfirm}
-                disabled={confirming}
-              >
+              <Button size="sm" onClick={handleConfirm} disabled={confirming}>
                 {confirming ? (
                   <Loader2 className="h-4 w-4 animate-spin mr-1" />
                 ) : (
@@ -300,4 +335,4 @@ export default function AssistantPage() {
 
 function formatToolLabel(name: string): string {
   return name.replace(/_/g, " ");
-}
+                                 }
