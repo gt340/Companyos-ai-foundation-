@@ -35,6 +35,27 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
   {
+    name: "generate_image",
+    description:
+      "Generate an image (poster, banner, illustration, etc.) from a text description. Returns an image the user can view and download. Does not change any company data, so it runs immediately without requiring confirmation.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "Detailed description of the image to generate.",
+        },
+        size: {
+          type: "string",
+          description:
+            "Image size: '1024x1024' (square), '1792x1024' (wide, good for banners), or '1024x1792' (tall, good for posters). Defaults to '1024x1024'.",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
     name: "list_documents",
     description:
       "List knowledge base documents for the current organization, optionally filtered by category or status.",
