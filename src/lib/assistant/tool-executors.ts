@@ -56,7 +56,7 @@ async function embedAndStoreChunks(
   for (let i = 0; i < chunks.length; i++) {
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: chunks[i],
+      input: chunks[i]!,
     });
     const embedding = embeddingResponse.data[0]!.embedding;
 
