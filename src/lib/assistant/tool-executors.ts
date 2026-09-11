@@ -19,6 +19,7 @@ interface ExecutorContext {
 // Tools not listed here are allowed for any role (e.g. read-only tools,
 // and update_profile since that only affects the confirming user).
 const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
+  generate_image: ["OWNER", "ADMIN"],
   invite_member: ["OWNER", "ADMIN"],
   update_organization_name: ["OWNER", "ADMIN"],
   update_security_settings: ["OWNER", "ADMIN"],
@@ -425,6 +426,7 @@ type ExecutorFn = (args: any, ctx: ExecutorContext) => Promise<unknown>;
 
 export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   search_knowledge_base: searchKnowledgeBase,
+  generate_image: generateImage,
   list_documents: listDocuments,
   get_members: getMembers,
   get_activity_logs: getActivityLogs,
