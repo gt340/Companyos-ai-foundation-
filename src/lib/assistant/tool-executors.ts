@@ -12,13 +12,35 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 interface ExecutorContext {
   organizationId: string;
   userId: string;
+  role: RoleKey;
+}
+
+// ── PERMISSION GATING ────────────────────────────────────────────────
+// Tools not listed here are allowed for any role (e.g. read-only tools,
+// and update_profile since that only affects the confirming user).
+const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
+  invite_member: ["OWNER", "ADMIN"],
+  update_organization_name: ["OWNER", "ADMIN"],
+  update_security_settings: ["OWNER", "ADMIN"],
+  update_notification_settings: ["OWNER", "ADMIN"],
+  create_knowledge_document: ["OWNER", "ADMIN"],
+  create_document_draft: ["OWNER", "ADMIN"],
+  update_document_content: ["OWNER", "ADMIN"],
+  delete_knowledge_document: ["OWNER", "ADMIN"],
+};
+
+function assertPermission(toolName: string, ctx: ExecutorContext) {
+  const allowedRoles = TOOL_MIN_ROLES[toolName];
+  if (!allowedRoles) return; // no restriction for this tool
+
+  if (!allowedRoles.includes(ctx.role)) {
+    throw new Error(
+      `You don't have permission to approve this action. Only Owners and Admins can do this — your role is ${ctx.role}.`
+    );
+  }
 }
 
 // ── SHARED CHUNKING/EMBEDDING HELPER ────────────────────────────────────
-// Mirrors the chunking approach used elsewhere in the knowledge base
-// pipeline (~1000 chars, 150 overlap, breaking on paragraph/sentence
-// boundaries where possible) so AI-drafted docs are searchable the same
-// way as uploaded ones.
 
 function chunkText(text: string, chunkSize = 1000, overlap = 150): string[] {
   const chunks: string[] = [];
@@ -406,6 +428,9 @@ export async function executeTool(
 ): Promise<unknown> {
   const fn = TOOL_EXECUTORS[toolName];
   if (!fn) throw new Error(`Unknown tool: ${toolName}`);
+
+  assertPermission(toolName, ctx);
+
   return fn(args, ctx);
 }
 
@@ -420,5 +445,12 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   const organizationId = await getActiveOrganizationId(user.id);
   if (!organizationId) throw new Error("No active organization");
 
-  return { organizationId, userId: user.id };
-    }
+  const membership = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId: user.id, organizationId } },
+    include: { role: true },
+  });
+
+  if (!membership) throw new Error("Not a member of this organization");
+
+  return { organizationId, userId: user.id, role: membership.role.key };
+}
