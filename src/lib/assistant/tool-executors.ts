@@ -475,4 +475,4 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   if (!membership) throw new Error("Not a member of this organization");
 
   return { organizationId, userId: user.id, role: membership.role.key };
-}
+    }
