@@ -39,6 +39,7 @@ async function searchKnowledgeBase(
 
   if (error) throw new Error(`Knowledge search failed: ${error.message}`);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (results ?? []).map((r: any) => ({
     content: r.content,
     similarity: r.similarity,
@@ -233,6 +234,7 @@ async function deleteKnowledgeDocument(
 
 // ── DISPATCH TABLE ──────────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ExecutorFn = (args: any, ctx: ExecutorContext) => Promise<unknown>;
 
 export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
