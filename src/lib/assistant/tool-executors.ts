@@ -87,7 +87,7 @@ async function embedAndStoreChunks(
       documentId,
       organizationId,
       chunkIndex: i,
-      content: chunks[i],
+      content: chunks[i]!,
       embedding,
     });
 
@@ -390,7 +390,7 @@ async function updateDocumentContent(
     .from("knowledge_documents")
     .update({
       extractedText: args.content,
-      content: chunks[i]!,
+      chunkCount,
       updatedAt: new Date().toISOString(),
     })
     .eq("id", args.documentId)
@@ -475,4 +475,4 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   if (!membership) throw new Error("Not a member of this organization");
 
   return { organizationId, userId: user.id, role: membership.role.key };
-    }
+}
