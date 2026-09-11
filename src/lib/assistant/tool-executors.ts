@@ -1,12 +1,13 @@
 // src/lib/assistant/tool-executors.ts
 
 import crypto from "crypto";
+import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
-import { retrieveContext } from "@/lib/knowledge/retrieve-context";
-import { auth } from "@/lib/auth"; // adjust import if your session helper lives elsewhere
 import type { RoleKey } from "@prisma/client";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 interface ExecutorContext {
   organizationId: string;
@@ -19,18 +20,39 @@ async function searchKnowledgeBase(
   args: { query: string; limit?: number },
   ctx: ExecutorContext
 ) {
-  return retrieveContext({
-    organizationId: ctx.organizationId,
-    query: args.query,
-    limit: args.limit ?? 5,
+  const embeddingResponse = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: args.query,
   });
+  const queryEmbedding = embeddingResponse.data[0]!.embedding;
+
+  const supabase = await createClient();
+  const { data: results, error } = await supabase.rpc(
+    "match_knowledge_chunks",
+    {
+      query_embedding: queryEmbedding,
+      match_organization_id: ctx.organizationId,
+      match_count: Math.min(args.limit ?? 8, 20),
+      match_category: null,
+    }
+  );
+
+  if (error) throw new Error(`Knowledge search failed: ${error.message}`);
+
+  return (results ?? []).map((r: any) => ({
+    content: r.content,
+    similarity: r.similarity,
+    documentTitle: r.title,
+    sourceType: r.sourceType,
+    category: r.category,
+  }));
 }
 
 async function listDocuments(
   args: { category?: string; status?: string },
   ctx: ExecutorContext
 ) {
-  const supabase = createClient();
+  const supabase = await createClient();
   let query = supabase
     .from("knowledge_documents")
     .select("id, title, category, sourceType, status, fileSizeBytes, createdAt")
@@ -172,7 +194,7 @@ async function createKnowledgeDocument(
   args: { url: string; category?: string },
   ctx: ExecutorContext
 ) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { data, error } = await supabase
     .from("knowledge_documents")
     .insert({
@@ -190,8 +212,6 @@ async function createKnowledgeDocument(
   if (error)
     throw new Error(`Failed to create knowledge document: ${error.message}`);
 
-  // If the upload-url route triggers extraction via Next.js after(), call
-  // the same trigger function here rather than duplicating that logic.
   return data;
 }
 
@@ -199,7 +219,7 @@ async function deleteKnowledgeDocument(
   args: { documentId: string },
   ctx: ExecutorContext
 ) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const { error } = await supabase
     .from("knowledge_documents")
     .delete()
@@ -242,11 +262,15 @@ export async function executeTool(
 }
 
 export async function buildExecutorContext(): Promise<ExecutorContext> {
-  const session = await auth();
-  if (!session?.user?.id) throw new Error("Not authenticated");
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const organizationId = await getActiveOrganizationId();
+  if (!user) throw new Error("Not authenticated");
+
+  const organizationId = await getActiveOrganizationId(user.id);
   if (!organizationId) throw new Error("No active organization");
 
-  return { organizationId, userId: session.user.id };
-}
+  return { organizationId, userId: user.id };
+    }
