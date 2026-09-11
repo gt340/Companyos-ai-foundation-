@@ -92,6 +92,7 @@ export default function AssistantPage() {
         const jsonStr = line.slice(5).trim();
         if (!jsonStr) continue;
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let event: any;
         try {
           event = JSON.parse(jsonStr);
