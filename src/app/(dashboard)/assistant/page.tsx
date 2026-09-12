@@ -67,109 +67,113 @@ export default function AssistantPage() {
     setStatusLine(null);
     setPendingAction(null);
 
-    const res = await fetch("/api/assistant/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: history.map((m) => ({ role: m.role, content: m.content })),
-      }),
-    });
-
-    if (!res.body) {
-      setIsLoading(false);
-      return;
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let assistantText = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      const res = await fetch("/api/assistant/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: history.map((m) => ({ role: m.role, content: m.content })),
+        }),
+      });
 
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() ?? "";
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}. Please try again.`);
+      }
 
-      for (const chunk of chunks) {
-        const line = chunk.trim();
-        if (!line.startsWith("data:")) continue;
-        const jsonStr = line.slice(5).trim();
-        if (!jsonStr) continue;
+      if (!res.body) {
+        throw new Error("No response received. Please try again.");
+      }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let event: any;
-        try {
-          event = JSON.parse(jsonStr);
-        } catch {
-          continue;
-        }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-        switch (event.type) {
-          case "text":
-            assistantText += event.content;
-            setStreamingText(assistantText);
-            break;
-          case "tool_call":
-            setStatusLine(
-              event.name === "generate_image"
-                ? "Generating image…"
-                : `Looking up ${formatToolLabel(event.name)}…`
-            );
-            break;
-          case "tool_result":
-            setStatusLine(null);
-            if (event.name === "generate_image" && event.result?.url) {
-              // Flush any streamed text so far as its own bubble first,
-              // so the image lands after it in reading order.
-              if (assistantText) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+
+        for (const chunk of chunks) {
+          const line = chunk.trim();
+          if (!line.startsWith("data:")) continue;
+          const jsonStr = line.slice(5).trim();
+          if (!jsonStr) continue;
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let event: any;
+          try {
+            event = JSON.parse(jsonStr);
+          } catch {
+            continue;
+          }
+
+          switch (event.type) {
+            case "text":
+              assistantText += event.content;
+              setStreamingText(assistantText);
+              break;
+            case "tool_call":
+              setStatusLine(
+                event.name === "generate_image"
+                  ? "Generating image…"
+                  : `Looking up ${formatToolLabel(event.name)}…`
+              );
+              break;
+            case "tool_result":
+              setStatusLine(null);
+              if (event.name === "generate_image" && event.result?.url) {
+                if (assistantText) {
+                  setMessages((prev) => [
+                    ...prev,
+                    { role: "assistant", content: assistantText },
+                  ]);
+                  assistantText = "";
+                  setStreamingText("");
+                }
                 setMessages((prev) => [
                   ...prev,
-                  { role: "assistant", content: assistantText },
+                  { role: "assistant", content: "", imageUrl: event.result.url },
                 ]);
-                assistantText = "";
-                setStreamingText("");
               }
-              setMessages((prev) => [
-                ...prev,
-                {
-                  role: "assistant",
-                  content: "",
-                  imageUrl: event.result.url,
-                },
-              ]);
-            }
-            break;
-          case "tool_error":
-            setStatusLine(`Couldn't complete ${formatToolLabel(event.name)}`);
-            break;
-          case "action_proposal":
-            setPendingAction({
-              tool: event.tool,
-              arguments: event.arguments,
-            });
-            break;
-          case "error":
-            assistantText +=
-              (assistantText ? "\n\n" : "") + `Error: ${event.message}`;
-            setStreamingText(assistantText);
-            break;
-          case "done":
-            break;
+              break;
+            case "tool_error":
+              setStatusLine(`Couldn't complete ${formatToolLabel(event.name)}`);
+              break;
+            case "action_proposal":
+              setPendingAction({ tool: event.tool, arguments: event.arguments });
+              break;
+            case "error":
+              assistantText +=
+                (assistantText ? "\n\n" : "") + `Error: ${event.message}`;
+              setStreamingText(assistantText);
+              break;
+            case "done":
+              break;
+          }
         }
       }
-    }
-
-    setIsLoading(false);
-    setStatusLine(null);
-    if (assistantText) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: assistantText },
-      ]);
-      setStreamingText("");
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Check your connection and try again.";
+      assistantText =
+        assistantText || `⚠️ Connection issue: ${message}`;
+    } finally {
+      setIsLoading(false);
+      setStatusLine(null);
+      if (assistantText) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: assistantText },
+        ]);
+        setStreamingText("");
+      }
     }
   }
 
@@ -214,7 +218,11 @@ export default function AssistantPage() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "❌ Something went wrong running that action." },
+        {
+          role: "assistant",
+          content:
+            "❌ Couldn't reach the server to run that action. Check your connection and try again.",
+        },
       ]);
     } finally {
       setPendingAction(null);
@@ -335,4 +343,4 @@ export default function AssistantPage() {
 
 function formatToolLabel(name: string): string {
   return name.replace(/_/g, " ");
-                                 }
+}
