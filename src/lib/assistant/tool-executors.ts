@@ -198,13 +198,13 @@ async function getOrganizationSettings(_args: unknown, ctx: ExecutorContext) {
 }
 
 async function generateImage(args: { prompt: string; size?: string }) {
-  const validSizes = ["1024x1024", "1792x1024", "1024x1792"] as const;
+  const validSizes = ["1024x1024", "1536x1024", "1024x1536"] as const;
   const size = validSizes.includes(args.size as typeof validSizes[number])
     ? (args.size as typeof validSizes[number])
     : "1024x1024";
 
   const response = await openai.images.generate({
-    model: "dall-e-3",
+    model: "gpt-image-1",
     prompt: args.prompt,
     size,
     n: 1,
