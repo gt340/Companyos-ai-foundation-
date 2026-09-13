@@ -206,7 +206,8 @@ async function generateImage(args: { prompt: string; size?: string }) {
   const response = await openai.images.generate({
     model: "gpt-image-1",
     prompt: args.prompt,
-    size,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    size: size as any,
     n: 1,
   });
 
