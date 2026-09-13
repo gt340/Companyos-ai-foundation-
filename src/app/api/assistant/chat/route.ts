@@ -180,6 +180,7 @@ export async function POST(req: Request) {
             } catch (err) {
               toolError = (err as Error).message;
               result = { error: toolError };
+              console.error(`Tool "${tc.name}" failed:`, err);
             }
 
             if (toolError) {
