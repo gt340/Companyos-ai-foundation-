@@ -12,12 +12,14 @@ import {
   Activity,
   Users,
   BookOpen,
+  Bot,
 } from "lucide-react";
 import { Logo } from "@/components/shared/logo";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Assistant", href: "/assistant", icon: Bot },
   { label: "Company", href: "/onboarding", icon: Building2 },
   { label: "Knowledge Base", href: "/knowledge", icon: BookOpen },
   { label: "Team", href: "/settings?tab=members", icon: Users },
