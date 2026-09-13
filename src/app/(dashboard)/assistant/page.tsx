@@ -89,10 +89,13 @@ export default function AssistantPage() {
   }, [messages, streamingText, pendingAction, pendingAttachment]);
 
   useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    interface WindowWithSpeech extends Window {
+      SpeechRecognition?: new () => SpeechRecognitionType;
+      webkitSpeechRecognition?: new () => SpeechRecognitionType;
+    }
+    const win = window as WindowWithSpeech;
     const SpeechRecognitionCtor =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      win.SpeechRecognition || win.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
       setMicSupported(false);
