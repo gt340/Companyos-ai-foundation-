@@ -5,7 +5,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Loader2, Send, Check, X } from "lucide-react";
+import { Loader2, Send, Check, X, Mic, MicOff } from "lucide-react";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -45,6 +45,9 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SpeechRecognitionType = any;
+
 export default function AssistantPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -55,11 +58,62 @@ export default function AssistantPage() {
   );
   const [isLoading, setIsLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [micSupported, setMicSupported] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionType | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingText, pendingAction]);
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setMicSupported(false);
+      return;
+    }
+
+    const recognition: SpeechRecognitionType = new SpeechRecognitionCtor();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: SpeechRecognitionType) => {
+      let transcript = "";
+      for (let i = 0; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+  }, []);
+
+  function toggleMic() {
+    if (!recognitionRef.current) return;
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      setInput("");
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  }
 
   async function sendMessage(history: ChatMessage[]) {
     setIsLoading(true);
@@ -162,8 +216,7 @@ export default function AssistantPage() {
         err instanceof Error
           ? err.message
           : "Something went wrong. Check your connection and try again.";
-      assistantText =
-        assistantText || `⚠️ Connection issue: ${message}`;
+      assistantText = assistantText || `⚠️ Connection issue: ${message}`;
     } finally {
       setIsLoading(false);
       setStatusLine(null);
@@ -180,6 +233,11 @@ export default function AssistantPage() {
   function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
 
     const nextHistory: ChatMessage[] = [
       ...messages,
@@ -318,6 +376,13 @@ export default function AssistantPage() {
         <div ref={scrollRef} />
       </div>
 
+      {isListening && (
+        <div className="px-4 pb-1 flex items-center gap-2 text-xs text-red-500">
+          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+          Listening…
+        </div>
+      )}
+
       <div className="border-t p-4 flex gap-2">
         <Input
           value={input}
@@ -326,6 +391,21 @@ export default function AssistantPage() {
           placeholder="Ask the assistant…"
           disabled={isLoading || !!pendingAction}
         />
+        {micSupported && (
+          <Button
+            type="button"
+            variant={isListening ? "destructive" : "outline"}
+            onClick={toggleMic}
+            disabled={isLoading || !!pendingAction}
+            title={isListening ? "Stop listening" : "Speak your message"}
+          >
+            {isListening ? (
+              <MicOff className="h-4 w-4" />
+            ) : (
+              <Mic className="h-4 w-4" />
+            )}
+          </Button>
+        )}
         <Button
           onClick={handleSend}
           disabled={isLoading || !!pendingAction || !input.trim()}
