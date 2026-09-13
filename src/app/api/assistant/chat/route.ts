@@ -21,13 +21,29 @@ const MAX_TOOL_ITERATIONS = 5;
 interface ClientMessage {
   role: "user" | "assistant";
   content: string;
+  imageDataUrl?: string;
 }
 
 function encodeEvent(event: Record<string, unknown>): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
+function toChatMessage(m: ClientMessage): ChatCompletionMessageParam {
+  if (m.role === "user" && m.imageDataUrl) {
+    return {
+      role: "user",
+      content: [
+        { type: "text", text: m.content },
+        { type: "image_url", image_url: { url: m.imageDataUrl } },
+      ],
+    };
+  }
+  return { role: m.role, content: m.content };
+}
+
 const SYSTEM_PROMPT = `You are the Company Assistant inside CompanyOS AI, embedded in a real organization's workspace. You have tools to look up information (members, activity logs, notifications, organization settings, and the company's knowledge base), tools to take actions (inviting members, updating settings, updating the user's profile, managing knowledge base documents), and a tool to generate images (posters, banners, illustrations).
+
+The user may attach an image directly to their message — you can see it and reference it naturally (e.g. "based on the poster you attached..."). The user may also attach a document — its extracted text will appear inline in their message, clearly marked.
 
 Always search the knowledge base before answering questions that might be covered by company documents. Read-only tools (including image generation) run automatically. When you want to take an action that changes company data, call the corresponding tool — the system will show the user a confirmation card before anything actually happens, so you do not need to ask permission in words first, just call the tool.`;
 
@@ -48,9 +64,7 @@ export async function POST(req: Request) {
 
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    ...clientMessages.map(
-      (m): ChatCompletionMessageParam => ({ role: m.role, content: m.content })
-    ),
+    ...clientMessages.map(toChatMessage),
   ];
 
   const stream = new ReadableStream({
