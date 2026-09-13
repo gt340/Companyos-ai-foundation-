@@ -3,12 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, LayoutDashboard, Settings, User, Building2, CreditCard, Bell, Activity, Users, BookOpen } from "lucide-react";
+import { Menu, X, LayoutDashboard, Settings, User, Building2, CreditCard, Bell, Activity, Users, BookOpen, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/shared/logo";
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Assistant", href: "/assistant", icon: Bot },
   { label: "Company", href: "/onboarding", icon: Building2 },
   { label: "Knowledge Base", href: "/knowledge", icon: BookOpen },
   { label: "Team", href: "/settings?tab=members", icon: Users },
