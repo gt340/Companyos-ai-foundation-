@@ -180,7 +180,6 @@ export async function POST(req: Request) {
             } catch (err) {
               toolError = (err as Error).message;
               result = { error: toolError };
-              console.error(`Tool "${tc.name}" failed:`, err);
             }
 
             if (toolError) {
@@ -193,10 +192,30 @@ export async function POST(req: Request) {
               );
             }
 
+            // The client already received the full result (including any
+            // image data URL) via the tool_result event above. What goes
+            // back into the model's own conversation history must stay
+            // small — a generated image's base64 payload can be hundreds
+            // of thousands of characters, which blows past the per-minute
+            // token rate limit on the very next call. So for image
+            // generation specifically, only tell the model that it worked
+            // (plus the revised prompt), never the actual image data.
+            const isImageResult =
+              tc.name === "generate_image" &&
+              result &&
+              typeof result === "object" &&
+              "url" in (result as Record<string, unknown>);
+
             messages.push({
               role: "tool",
               tool_call_id: tc.id,
-              content: JSON.stringify(result),
+              content: isImageResult
+                ? JSON.stringify({
+                    generated: true,
+                    revisedPrompt:
+                      (result as { revisedPrompt?: string }).revisedPrompt ?? null,
+                  })
+                : JSON.stringify(result),
             });
           }
           // loop continues — next iteration re-calls OpenAI with tool results in context
