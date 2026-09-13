@@ -208,14 +208,15 @@ async function generateImage(args: { prompt: string; size?: string }) {
     prompt: args.prompt,
     size,
     n: 1,
-    response_format: "url",
   });
 
   const image = response.data?.[0];
-  if (!image?.url) throw new Error("Image generation failed — no image returned.");
+  if (!image) throw new Error("Image generation failed — no image returned.");
 
-  return { url: image.url, revisedPrompt: image.revised_prompt ?? args.prompt };
-}
+  const url = image.url ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : null);
+  if (!url) throw new Error("Image generation failed — no image data returned.");
+
+  return { url, revisedPrompt: image.revised_prompt ?? args.prompt };
 
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
 
