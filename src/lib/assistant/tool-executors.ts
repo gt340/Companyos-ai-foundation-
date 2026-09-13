@@ -213,10 +213,12 @@ async function generateImage(args: { prompt: string; size?: string }) {
   const image = response.data?.[0];
   if (!image) throw new Error("Image generation failed — no image returned.");
 
-  const url = image.url ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : null);
+  const url =
+    image.url ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : null);
   if (!url) throw new Error("Image generation failed — no image data returned.");
 
   return { url, revisedPrompt: image.revised_prompt ?? args.prompt };
+}
 
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
 
@@ -306,7 +308,7 @@ async function createKnowledgeDocument(
       organizationId: ctx.organizationId,
       uploadedBy: ctx.userId,
       title: args.url,
-      sourceType: "URL",
+      sourceType: "url",
       sourceUrl: args.url,
       category: args.category ?? "general",
       status: "PENDING",
@@ -331,7 +333,7 @@ async function createDocumentDraft(
       organizationId: ctx.organizationId,
       uploadedBy: ctx.userId,
       title: args.title,
-      sourceType: "AI_DRAFT",
+      sourceType: "ai_draft",
       category: args.category,
       status: "READY",
       extractedText: args.content,
