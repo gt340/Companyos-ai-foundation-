@@ -5,18 +5,34 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Loader2, Send, Check, X, Mic, MicOff } from "lucide-react";
+import {
+  Loader2,
+  Send,
+  Check,
+  X,
+  Mic,
+  MicOff,
+  Paperclip,
+  FileText,
+} from "lucide-react";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  displayContent?: string;
   imageUrl?: string;
+  imageDataUrl?: string;
+  attachmentName?: string;
 }
 
 interface PendingAction {
   tool: string;
   arguments: Record<string, unknown>;
 }
+
+type PendingAttachment =
+  | { kind: "image"; dataUrl: string; name: string; file: File }
+  | { kind: "text"; text: string; name: string; file: File };
 
 function describeAction(tool: string, args: Record<string, unknown>): string {
   switch (tool) {
@@ -60,12 +76,17 @@ export default function AssistantPage() {
   const [confirming, setConfirming] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [micSupported, setMicSupported] = useState(true);
+  const [pendingAttachment, setPendingAttachment] =
+    useState<PendingAttachment | null>(null);
+  const [saveToKnowledgeBase, setSaveToKnowledgeBase] = useState(false);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionType | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText, pendingAction]);
+  }, [messages, streamingText, pendingAction, pendingAttachment]);
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,13 +112,8 @@ export default function AssistantPage() {
       setInput(transcript);
     };
 
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognition.onerror = () => {
-      setIsListening(false);
-    };
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
 
     recognitionRef.current = recognition;
   }, []);
@@ -115,6 +131,99 @@ export default function AssistantPage() {
     }
   }
 
+  function handleAttachClick() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow selecting the same file again later
+    if (!file) return;
+
+    setSaveToKnowledgeBase(false);
+
+    if (file.type.startsWith("image/")) {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Couldn't read image file."));
+        reader.readAsDataURL(file);
+      });
+      setPendingAttachment({ kind: "image", dataUrl, name: file.name, file });
+      return;
+    }
+
+    setAttachmentBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/assistant/extract-attachment", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `⚠️ Couldn't read "${file.name}": ${data.error ?? "unknown error"}`,
+          },
+        ]);
+        return;
+      }
+
+      setPendingAttachment({ kind: "text", text: data.text, name: file.name, file });
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `⚠️ Couldn't upload "${file.name}". Check your connection and try again.`,
+        },
+      ]);
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }
+
+  function removeAttachment() {
+    setPendingAttachment(null);
+    setSaveToKnowledgeBase(false);
+  }
+
+  async function saveAttachmentToKnowledgeBase(file: File) {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("category", "general");
+      const res = await fetch("/api/knowledge/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: res.ok
+            ? `📎 Added "${file.name}" to the knowledge base — it's processing now.`
+            : `⚠️ Couldn't save "${file.name}" to the knowledge base: ${data.error ?? "unknown error"}`,
+        },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `⚠️ Couldn't save "${file.name}" to the knowledge base. Check your connection and try again.`,
+        },
+      ]);
+    }
+  }
+
   async function sendMessage(history: ChatMessage[]) {
     setIsLoading(true);
     setStreamingText("");
@@ -128,7 +237,11 @@ export default function AssistantPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: history.map((m) => ({ role: m.role, content: m.content })),
+          messages: history.map((m) => ({
+            role: m.role,
+            content: m.content,
+            ...(m.imageDataUrl ? { imageDataUrl: m.imageDataUrl } : {}),
+          })),
         }),
       });
 
@@ -232,20 +345,51 @@ export default function AssistantPage() {
 
   function handleSend() {
     const trimmed = input.trim();
-    if (!trimmed || isLoading) return;
+    if ((!trimmed && !pendingAttachment) || isLoading) return;
 
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
     }
 
+    let apiContent = trimmed;
+    let displayContent = trimmed;
+    let imageDataUrl: string | undefined;
+    let attachmentName: string | undefined;
+    const attachmentFile = pendingAttachment?.file;
+    const shouldSave = saveToKnowledgeBase;
+
+    if (pendingAttachment?.kind === "image") {
+      imageDataUrl = pendingAttachment.dataUrl;
+      attachmentName = pendingAttachment.name;
+      displayContent = trimmed || `📎 ${pendingAttachment.name}`;
+      apiContent = trimmed || "What do you see in this image?";
+    } else if (pendingAttachment?.kind === "text") {
+      attachmentName = pendingAttachment.name;
+      displayContent = trimmed || `📎 ${pendingAttachment.name}`;
+      apiContent =
+        `${trimmed || "Here's a document I'm attaching."}\n\n[Attached document: ${pendingAttachment.name}]\n${pendingAttachment.text}`;
+    }
+
     const nextHistory: ChatMessage[] = [
       ...messages,
-      { role: "user", content: trimmed },
+      {
+        role: "user",
+        content: apiContent,
+        displayContent,
+        imageDataUrl,
+        attachmentName,
+      },
     ];
     setMessages(nextHistory);
     setInput("");
+    setPendingAttachment(null);
+    setSaveToKnowledgeBase(false);
     sendMessage(nextHistory);
+
+    if (shouldSave && attachmentFile) {
+      saveAttachmentToKnowledgeBase(attachmentFile);
+    }
   }
 
   async function handleConfirm() {
@@ -318,14 +462,29 @@ export default function AssistantPage() {
                 className="rounded-lg max-w-[85%] border"
               />
             ) : (
-              <div
-                className={`rounded-lg px-4 py-2 max-w-[85%] whitespace-pre-wrap text-sm ${
-                  m.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
-                }`}
-              >
-                {m.content}
+              <div className="max-w-[85%] flex flex-col items-end gap-1">
+                {m.imageDataUrl && (
+                  <img
+                    src={m.imageDataUrl}
+                    alt={m.attachmentName ?? "Attached"}
+                    className="rounded-lg max-h-40 border"
+                  />
+                )}
+                {m.attachmentName && !m.imageDataUrl && (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <FileText className="h-3 w-3" />
+                    {m.attachmentName}
+                  </div>
+                )}
+                <div
+                  className={`rounded-lg px-4 py-2 whitespace-pre-wrap text-sm ${
+                    m.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted"
+                  }`}
+                >
+                  {m.displayContent ?? m.content}
+                </div>
               </div>
             )}
           </div>
@@ -383,7 +542,63 @@ export default function AssistantPage() {
         </div>
       )}
 
+      {attachmentBusy && (
+        <div className="px-4 pb-1 flex items-center gap-2 text-xs text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Reading file…
+        </div>
+      )}
+
+      {pendingAttachment && (
+        <div className="px-4 pb-2">
+          <div className="flex items-center justify-between rounded-lg border bg-muted/50 px-3 py-2 text-sm">
+            <div className="flex items-center gap-2 min-w-0">
+              {pendingAttachment.kind === "image" ? (
+                <img
+                  src={pendingAttachment.dataUrl}
+                  alt={pendingAttachment.name}
+                  className="h-8 w-8 rounded object-cover flex-shrink-0"
+                />
+              ) : (
+                <FileText className="h-4 w-4 flex-shrink-0" />
+              )}
+              <span className="truncate">{pendingAttachment.name}</span>
+            </div>
+            <button
+              onClick={removeAttachment}
+              className="text-muted-foreground hover:text-foreground flex-shrink-0 ml-2"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground mt-1.5 pl-1">
+            <input
+              type="checkbox"
+              checked={saveToKnowledgeBase}
+              onChange={(e) => setSaveToKnowledgeBase(e.target.checked)}
+            />
+            Also save this to the knowledge base
+          </label>
+        </div>
+      )}
+
       <div className="border-t p-4 flex gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFileSelected}
+          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,audio/*,video/*"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleAttachClick}
+          disabled={isLoading || !!pendingAction || attachmentBusy}
+          title="Attach a file or image"
+        >
+          <Paperclip className="h-4 w-4" />
+        </Button>
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -408,7 +623,11 @@ export default function AssistantPage() {
         )}
         <Button
           onClick={handleSend}
-          disabled={isLoading || !!pendingAction || !input.trim()}
+          disabled={
+            isLoading ||
+            !!pendingAction ||
+            (!input.trim() && !pendingAttachment)
+          }
         >
           {isLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
