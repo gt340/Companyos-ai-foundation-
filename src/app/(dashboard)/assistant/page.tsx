@@ -116,7 +116,21 @@ export default function AssistantPage() {
     };
 
     recognition.onend = () => setIsListening(false);
-    recognition.onerror = () => setIsListening(false);
+    recognition.onerror = (event: SpeechRecognitionType) => {
+      setIsListening(false);
+      const reason =
+        event.error === "not-allowed"
+          ? "Microphone access was denied. Check your browser's site permissions (tap the lock/info icon next to the address bar → Permissions → Microphone)."
+          : event.error === "no-speech"
+          ? "No speech detected — try again."
+          : event.error === "audio-capture"
+          ? "No microphone found on this device."
+          : `Microphone error: ${event.error}`;
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `⚠️ ${reason}` },
+      ]);
+    };
 
     recognitionRef.current = recognition;
   }, []);
@@ -129,8 +143,20 @@ export default function AssistantPage() {
       setIsListening(false);
     } else {
       setInput("");
-      recognitionRef.current.start();
-      setIsListening(true);
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (err) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `⚠️ Couldn't start the microphone: ${
+              err instanceof Error ? err.message : "unknown error"
+            }`,
+          },
+        ]);
+      }
     }
   }
 
@@ -459,11 +485,22 @@ export default function AssistantPage() {
             className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
           >
             {m.imageUrl ? (
-              <img
-                src={m.imageUrl}
-                alt="Generated"
-                className="rounded-lg max-w-[85%] border"
-              />
+              <div className="flex flex-col items-end gap-2 max-w-[85%]">
+                <img
+                  src={m.imageUrl}
+                  alt="Generated"
+                  className="rounded-lg border"
+                />
+                <a
+                  href={m.imageUrl}
+                  download="generated-image.png"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary underline"
+                >
+                  Download image
+                </a>
+              </div>
             ) : (
               <div className="max-w-[85%] flex flex-col items-end gap-1">
                 {m.imageDataUrl && (
