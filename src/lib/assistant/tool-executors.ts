@@ -197,7 +197,10 @@ async function getOrganizationSettings(_args: unknown, ctx: ExecutorContext) {
   return org;
 }
 
-async function generateImage(args: { prompt: string; size?: string }) {
+async function generateImage(
+  args: { prompt: string; size?: string },
+  ctx: ExecutorContext
+) {
   const validSizes = ["1024x1024", "1536x1024", "1024x1536"] as const;
   const size = validSizes.includes(args.size as typeof validSizes[number])
     ? (args.size as typeof validSizes[number])
@@ -214,11 +217,40 @@ async function generateImage(args: { prompt: string; size?: string }) {
   const image = response.data?.[0];
   if (!image) throw new Error("Image generation failed — no image returned.");
 
-  const url =
-    image.url ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : null);
-  if (!url) throw new Error("Image generation failed — no image data returned.");
+  let buffer: Buffer;
+  if (image.b64_json) {
+    buffer = Buffer.from(image.b64_json, "base64");
+  } else if (image.url) {
+    const fetched = await fetch(image.url);
+    buffer = Buffer.from(await fetched.arrayBuffer());
+  } else {
+    throw new Error("Image generation failed — no image data returned.");
+  }
 
-  return { url, revisedPrompt: image.revised_prompt ?? args.prompt };
+  // Persist to storage permanently so the link survives after this chat
+  // session ends (the raw data the API returns only lives in this one
+  // response and would otherwise be lost).
+  const supabase = await createClient();
+  const storagePath = `${ctx.organizationId}/generated-images/${Date.now()}-generated.png`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("knowledge-base")
+    .upload(storagePath, buffer, { contentType: "image/png" });
+
+  if (uploadError)
+    throw new Error(`Failed to save generated image: ${uploadError.message}`);
+
+  const { data: publicUrlData } = supabase.storage
+    .from("knowledge-base")
+    .getPublicUrl(storagePath);
+
+  if (!publicUrlData?.publicUrl)
+    throw new Error("Image saved, but couldn't create a permanent link.");
+
+  return {
+    url: publicUrlData.publicUrl,
+    revisedPrompt: image.revised_prompt ?? args.prompt,
+  };
 }
 
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
