@@ -5,6 +5,8 @@ import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
+import { extractFromUrl, cleanText } from "@/lib/knowledge/extract-text";
+import { processDocument } from "@/lib/knowledge/process-document";
 import type { RoleKey } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
@@ -335,7 +337,7 @@ async function createKnowledgeDocument(
   ctx: ExecutorContext
 ) {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  const { data: doc, error } = await supabase
     .from("knowledge_documents")
     .insert({
       organizationId: ctx.organizationId,
@@ -344,7 +346,7 @@ async function createKnowledgeDocument(
       sourceType: "url",
       sourceUrl: args.url,
       category: args.category ?? "general",
-      status: "PENDING",
+      status: "EXTRACTING",
     })
     .select()
     .single();
@@ -352,7 +354,29 @@ async function createKnowledgeDocument(
   if (error)
     throw new Error(`Failed to create knowledge document: ${error.message}`);
 
-  return data;
+  const documentId = doc.id as string;
+
+  // Run the real extraction pipeline now (URLs are typically fast — no
+  // transcription involved — so this runs inline rather than deferred,
+  // unlike the file-upload route's background processing).
+  const extractResult = await extractFromUrl(args.url);
+
+  if ("error" in extractResult) {
+    await supabase
+      .from("knowledge_documents")
+      .update({ status: "FAILED", errorMessage: extractResult.error })
+      .eq("id", documentId);
+    throw new Error(`Couldn't extract content from that URL: ${extractResult.error}`);
+  }
+
+  await processDocument({
+    documentId,
+    organizationId: ctx.organizationId,
+    rawText: cleanText(extractResult.text),
+    extraMetadata: { sourceUrl: args.url, sourceType: "url" },
+  });
+
+  return { documentId, status: "READY", url: args.url };
 }
 
 async function createDocumentDraft(
