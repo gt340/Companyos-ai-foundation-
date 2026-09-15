@@ -35,27 +35,6 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
   {
-    name: "generate_image",
-    description:
-      "Generate an image (poster, banner, illustration, etc.) from a text description. Returns an image the user can view and download. Does not change any company data, so it runs immediately without requiring confirmation.",
-    mutating: false,
-    parameters: {
-      type: "object",
-      properties: {
-        prompt: {
-          type: "string",
-          description: "Detailed description of the image to generate.",
-        },
-        size: {
-          type: "string",
-          description:
-            "Image size: '1024x1024' (square), '1792x1024' (wide, good for banners), or '1024x1792' (tall, good for posters). Defaults to '1024x1024'.",
-        },
-      },
-      required: ["prompt"],
-    },
-  },
-  {
     name: "list_documents",
     description:
       "List knowledge base documents for the current organization, optionally filtered by category or status.",
@@ -117,6 +96,43 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       properties: {},
     },
   },
+  {
+    name: "generate_image",
+    description:
+      "Generate a new image (poster, banner, illustration, etc.) from a text description. Returns an image the user can view and download. Does not change any company data, so it runs immediately without requiring confirmation.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "Detailed description of the image to generate.",
+        },
+        size: {
+          type: "string",
+          description:
+            "Image size: '1024x1024' (square), '1536x1024' (landscape, good for banners), or '1024x1536' (portrait, good for posters). Defaults to '1024x1024'.",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "edit_image",
+    description:
+      "Edit the image the user just attached to this message (e.g. remove an object, change the background, adjust colors, add text). Only works when the user has attached an image in their current message — if no image is attached, this will fail. Does not change any company data, so it runs immediately without requiring confirmation.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "Description of the edit to make to the attached image.",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
 
   // ── MUTATING TOOLS (require user confirmation before executing) ────
 
@@ -138,6 +154,26 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         },
       },
       required: ["email", "role"],
+    },
+  },
+  {
+    name: "change_member_role",
+    description:
+      "Change an existing organization member's role. Identify the member by their email address. Note: this changes their displayed team role label — it does not transfer the organization's underlying billing/ownership record.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        email: {
+          type: "string",
+          description: "Email of the existing member whose role to change.",
+        },
+        newRole: {
+          type: "string",
+          description: "New role: 'owner', 'admin', 'member', or 'viewer'.",
+        },
+      },
+      required: ["email", "newRole"],
     },
   },
   {
