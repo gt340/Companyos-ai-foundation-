@@ -38,6 +38,8 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
   switch (tool) {
     case "invite_member":
       return `Invite ${args.email} as ${args.role}`;
+    case "change_member_role":
+      return `Change ${args.email}'s role to ${args.newRole}`;
     case "update_organization_name":
       return `Update organization${args.name ? ` name to "${args.name}"` : ""}${
         args.slug ? `, slug to "${args.slug}"` : ""
@@ -308,6 +310,9 @@ export default function AssistantPage() {
             continue;
           }
 
+          const isImageTool =
+            event.name === "generate_image" || event.name === "edit_image";
+
           switch (event.type) {
             case "text":
               assistantText += event.content;
@@ -317,12 +322,14 @@ export default function AssistantPage() {
               setStatusLine(
                 event.name === "generate_image"
                   ? "Generating image…"
+                  : event.name === "edit_image"
+                  ? "Editing image…"
                   : `Looking up ${formatToolLabel(event.name)}…`
               );
               break;
             case "tool_result":
               setStatusLine(null);
-              if (event.name === "generate_image" && event.result?.url) {
+              if (isImageTool && event.result?.url) {
                 if (assistantText) {
                   setMessages((prev) => [
                     ...prev,
@@ -493,7 +500,7 @@ export default function AssistantPage() {
                 />
                 <a
                   href={m.imageUrl}
-                  download="generated-image.png"
+                  download="image.png"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-primary underline"
