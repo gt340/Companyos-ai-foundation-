@@ -1,7 +1,7 @@
 // src/lib/assistant/tool-executors.ts
 
 import crypto from "crypto";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
@@ -15,6 +15,10 @@ interface ExecutorContext {
   organizationId: string;
   userId: string;
   role: RoleKey;
+  // Populated by the chat route (only for the current turn) when the
+  // user's latest message includes an attached image — used by
+  // edit_image. Not present when called from the execute-action route.
+  attachedImageDataUrl?: string;
 }
 
 // ── PERMISSION GATING ────────────────────────────────────────────────
@@ -22,7 +26,9 @@ interface ExecutorContext {
 // and update_profile since that only affects the confirming user).
 const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
   generate_image: ["OWNER", "ADMIN"],
+  edit_image: ["OWNER", "ADMIN"],
   invite_member: ["OWNER", "ADMIN"],
+  change_member_role: ["OWNER", "ADMIN"],
   update_organization_name: ["OWNER", "ADMIN"],
   update_security_settings: ["OWNER", "ADMIN"],
   update_notification_settings: ["OWNER", "ADMIN"],
@@ -97,6 +103,36 @@ async function embedAndStoreChunks(
   }
 
   return chunks.length;
+}
+
+// ── SHARED IMAGE STORAGE HELPER ─────────────────────────────────────────
+// Used by both generate_image and edit_image so a result never depends on
+// a temporary OpenAI-hosted URL or an in-memory base64 payload that would
+// otherwise be lost once the chat session ends.
+
+async function uploadImageToStorage(
+  buffer: Buffer,
+  organizationId: string,
+  folder: "generated-images" | "edited-images"
+): Promise<string> {
+  const supabase = await createClient();
+  const storagePath = `${organizationId}/${folder}/${Date.now()}-image.png`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("knowledge-base")
+    .upload(storagePath, buffer, { contentType: "image/png" });
+
+  if (uploadError)
+    throw new Error(`Failed to save image: ${uploadError.message}`);
+
+  const { data: publicUrlData } = supabase.storage
+    .from("knowledge-base")
+    .getPublicUrl(storagePath);
+
+  if (!publicUrlData?.publicUrl)
+    throw new Error("Image saved, but couldn't create a permanent link.");
+
+  return publicUrlData.publicUrl;
 }
 
 // ── READ-ONLY EXECUTORS ───────────────────────────────────────────────
@@ -229,30 +265,60 @@ async function generateImage(
     throw new Error("Image generation failed — no image data returned.");
   }
 
-  // Persist to storage permanently so the link survives after this chat
-  // session ends (the raw data the API returns only lives in this one
-  // response and would otherwise be lost).
-  const supabase = await createClient();
-  const storagePath = `${ctx.organizationId}/generated-images/${Date.now()}-generated.png`;
+  const url = await uploadImageToStorage(
+    buffer,
+    ctx.organizationId,
+    "generated-images"
+  );
 
-  const { error: uploadError } = await supabase.storage
-    .from("knowledge-base")
-    .upload(storagePath, buffer, { contentType: "image/png" });
+  return { url, revisedPrompt: image.revised_prompt ?? args.prompt };
+}
 
-  if (uploadError)
-    throw new Error(`Failed to save generated image: ${uploadError.message}`);
+async function editImage(args: { prompt: string }, ctx: ExecutorContext) {
+  if (!ctx.attachedImageDataUrl) {
+    throw new Error(
+      "No image is attached to this message. Attach an image, then ask me to edit it in the same message."
+    );
+  }
 
-  const { data: publicUrlData } = supabase.storage
-    .from("knowledge-base")
-    .getPublicUrl(storagePath);
+  const match = ctx.attachedImageDataUrl.match(/^data:(.+);base64,(.+)$/);
+  if (!match) throw new Error("The attached image data is in an unexpected format.");
 
-  if (!publicUrlData?.publicUrl)
-    throw new Error("Image saved, but couldn't create a permanent link.");
+  const mimeType = match[1]!;
+  const base64Data = match[2]!;
+  const sourceBuffer = Buffer.from(base64Data, "base64");
+  const extension = mimeType.split("/")[1] ?? "png";
 
-  return {
-    url: publicUrlData.publicUrl,
-    revisedPrompt: image.revised_prompt ?? args.prompt,
-  };
+  const imageFile = await toFile(sourceBuffer, `source.${extension}`, {
+    type: mimeType,
+  });
+
+  const response = await openai.images.edit({
+    model: "gpt-image-1",
+    image: imageFile,
+    prompt: args.prompt,
+  });
+
+  const image = response.data?.[0];
+  if (!image) throw new Error("Image editing failed — no image returned.");
+
+  let buffer: Buffer;
+  if (image.b64_json) {
+    buffer = Buffer.from(image.b64_json, "base64");
+  } else if (image.url) {
+    const fetched = await fetch(image.url);
+    buffer = Buffer.from(await fetched.arrayBuffer());
+  } else {
+    throw new Error("Image editing failed — no image data returned.");
+  }
+
+  const url = await uploadImageToStorage(
+    buffer,
+    ctx.organizationId,
+    "edited-images"
+  );
+
+  return { url, revisedPrompt: args.prompt };
 }
 
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
@@ -277,6 +343,54 @@ async function inviteMember(
     },
   });
   return invitation;
+}
+
+async function changeMemberRole(
+  args: { email: string; newRole: string },
+  ctx: ExecutorContext
+) {
+  const roleKey = args.newRole.toUpperCase() as RoleKey;
+  if (!["OWNER", "ADMIN", "MEMBER", "VIEWER"].includes(roleKey)) {
+    throw new Error(`Invalid role: ${args.newRole}`);
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      organizationId: ctx.organizationId,
+      user: { email: args.email },
+    },
+    include: { user: true },
+  });
+
+  if (!membership) {
+    throw new Error(
+      `No member with email ${args.email} found in this organization.`
+    );
+  }
+
+  const role = await prisma.role.findUnique({
+    where: {
+      organizationId_key: { organizationId: ctx.organizationId, key: roleKey },
+    },
+  });
+
+  if (!role) {
+    throw new Error(`Role ${roleKey} is not configured for this organization.`);
+  }
+
+  await prisma.membership.update({
+    where: { id: membership.id },
+    data: { roleId: role.id },
+  });
+
+  return {
+    email: args.email,
+    newRole: roleKey,
+    note:
+      roleKey === "OWNER"
+        ? "This updates their team role label to Owner. It does not transfer the organization's underlying billing/ownership record — that's a separate setting."
+        : undefined,
+  };
 }
 
 async function updateOrganizationName(
@@ -356,9 +470,6 @@ async function createKnowledgeDocument(
 
   const documentId = doc.id as string;
 
-  // Run the real extraction pipeline now (URLs are typically fast — no
-  // transcription involved — so this runs inline rather than deferred,
-  // unlike the file-upload route's background processing).
   const extractResult = await extractFromUrl(args.url);
 
   if ("error" in extractResult) {
@@ -487,12 +598,14 @@ type ExecutorFn = (args: any, ctx: ExecutorContext) => Promise<unknown>;
 export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   search_knowledge_base: searchKnowledgeBase,
   generate_image: generateImage,
+  edit_image: editImage,
   list_documents: listDocuments,
   get_members: getMembers,
   get_activity_logs: getActivityLogs,
   get_notifications: getNotifications,
   get_organization_settings: getOrganizationSettings,
   invite_member: inviteMember,
+  change_member_role: changeMemberRole,
   update_organization_name: updateOrganizationName,
   update_security_settings: updateSecuritySettings,
   update_notification_settings: updateNotificationSettings,
