@@ -41,11 +41,13 @@ function toChatMessage(m: ClientMessage): ChatCompletionMessageParam {
   return { role: m.role, content: m.content };
 }
 
-const SYSTEM_PROMPT = `You are the Company Assistant inside CompanyOS AI, embedded in a real organization's workspace. You have tools to look up information (members, activity logs, notifications, organization settings, and the company's knowledge base), tools to take actions (inviting members, updating settings, updating the user's profile, managing knowledge base documents), and a tool to generate images (posters, banners, illustrations).
+const SYSTEM_PROMPT = `You are the Company Assistant inside CompanyOS AI, embedded in a real organization's workspace. You have tools to look up information (members, activity logs, notifications, organization settings, and the company's knowledge base), tools to take actions (inviting members, changing a member's role, updating settings, updating the user's profile, managing knowledge base documents), a tool to generate new images (posters, banners, illustrations), and a tool to edit an image the user has attached to their current message.
 
-The user may attach an image directly to their message — you can see it and reference it naturally (e.g. "based on the poster you attached..."). The user may also attach a document — its extracted text will appear inline in their message, clearly marked.
+The user may attach an image directly to their message — you can see it and reference it naturally (e.g. "based on the poster you attached..."). If they ask you to edit, modify, or change that attached image, use the edit_image tool. The user may also attach a document — its extracted text will appear inline in their message, clearly marked.
 
-Always search the knowledge base before answering questions that might be covered by company documents. Read-only tools (including image generation) run automatically. When you want to take an action that changes company data, call the corresponding tool — the system will show the user a confirmation card before anything actually happens, so you do not need to ask permission in words first, just call the tool.`;
+Always search the knowledge base before answering questions that might be covered by company documents. Read-only tools (including image generation and editing) run automatically. When you want to take an action that changes company data, call the corresponding tool — the system will show the user a confirmation card before anything actually happens, so you do not need to ask permission in words first, just call the tool.
+
+Do not use Markdown formatting (no **bold**, no # headers, no bullet points with - or *). Write in plain text only, since your replies are displayed as-is without any formatting applied. For lists, just use numbered lines like "1. Item" on separate lines.`;
 
 export async function POST(req: Request) {
   let ctx;
@@ -61,6 +63,16 @@ export async function POST(req: Request) {
   const { messages: clientMessages } = (await req.json()) as {
     messages: ClientMessage[];
   };
+
+  // If the user's latest message includes an attached image, make it
+  // available to tool executors for this turn only (used by edit_image).
+  const latestUserMessage = [...clientMessages]
+    .reverse()
+    .find((m) => m.role === "user");
+  const attachedImageDataUrl = latestUserMessage?.imageDataUrl;
+  const ctxForTools = attachedImageDataUrl
+    ? { ...ctx, attachedImageDataUrl }
+    : ctx;
 
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -160,7 +172,8 @@ export async function POST(req: Request) {
           }
 
           // All calls in this batch are read-only (this includes
-          // generate_image) — execute each and feed results back in.
+          // generate_image / edit_image) — execute each and feed results
+          // back in.
           for (const tc of toolCalls) {
             let parsedArgs: unknown = {};
             try {
@@ -176,7 +189,7 @@ export async function POST(req: Request) {
             let result: unknown;
             let toolError: string | null = null;
             try {
-              result = await executeTool(tc.name, parsedArgs, ctx);
+              result = await executeTool(tc.name, parsedArgs, ctxForTools);
             } catch (err) {
               toolError = (err as Error).message;
               result = { error: toolError };
@@ -195,13 +208,14 @@ export async function POST(req: Request) {
             // The client already received the full result (including any
             // image data URL) via the tool_result event above. What goes
             // back into the model's own conversation history must stay
-            // small — a generated image's base64 payload can be hundreds
-            // of thousands of characters, which blows past the per-minute
-            // token rate limit on the very next call. So for image
-            // generation specifically, only tell the model that it worked
-            // (plus the revised prompt), never the actual image data.
+            // small — a generated/edited image's base64 payload can be
+            // hundreds of thousands of characters, which blows past the
+            // per-minute token rate limit on the very next call. So for
+            // image tools specifically, only tell the model that it
+            // worked (plus the revised prompt), never the actual image
+            // data.
             const isImageResult =
-              tc.name === "generate_image" &&
+              (tc.name === "generate_image" || tc.name === "edit_image") &&
               result &&
               typeof result === "object" &&
               "url" in (result as Record<string, unknown>);
