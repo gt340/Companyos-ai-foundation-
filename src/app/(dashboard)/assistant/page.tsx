@@ -63,6 +63,53 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
   }
 }
 
+// Resize/compress an image client-side before it's converted to base64 and
+// uploaded — a raw phone photo can be several MB, which is slow or can
+// stall entirely as a JSON request body over a weak mobile connection.
+async function compressImageToDataUrl(
+  file: File,
+  maxDimension = 1024,
+  quality = 0.8
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+
+      let { width, height } = img;
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Couldn't process image."));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Couldn't load image."));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SpeechRecognitionType = any;
 
@@ -174,13 +221,21 @@ export default function AssistantPage() {
     setSaveToKnowledgeBase(false);
 
     if (file.type.startsWith("image/")) {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error("Couldn't read image file."));
-        reader.readAsDataURL(file);
-      });
-      setPendingAttachment({ kind: "image", dataUrl, name: file.name, file });
+      setAttachmentBusy(true);
+      try {
+        const dataUrl = await compressImageToDataUrl(file);
+        setPendingAttachment({ kind: "image", dataUrl, name: file.name, file });
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: `⚠️ Couldn't process "${file.name}". Try a different image.`,
+          },
+        ]);
+      } finally {
+        setAttachmentBusy(false);
+      }
       return;
     }
 
@@ -592,7 +647,7 @@ export default function AssistantPage() {
       {attachmentBusy && (
         <div className="px-4 pb-1 flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Reading file…
+          Processing file…
         </div>
       )}
 
