@@ -2,6 +2,7 @@
 
 import crypto from "crypto";
 import OpenAI, { toFile } from "openai";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
@@ -106,33 +107,38 @@ async function embedAndStoreChunks(
 }
 
 // ── SHARED IMAGE STORAGE HELPER ─────────────────────────────────────────
-// Used by both generate_image and edit_image so a result never depends on
-// a temporary OpenAI-hosted URL or an in-memory base64 payload that would
-// otherwise be lost once the chat session ends.
+// Uses the admin/service-role Supabase client (bypassing RLS entirely)
+// and a signed URL — the same proven approach the real file-upload route
+// uses — rather than assuming the "knowledge-base" bucket is public.
 
 async function uploadImageToStorage(
   buffer: Buffer,
   organizationId: string,
   folder: "generated-images" | "edited-images"
 ): Promise<string> {
-  const supabase = await createClient();
+  const admin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
   const storagePath = `${organizationId}/${folder}/${Date.now()}-image.png`;
 
-  const { error: uploadError } = await supabase.storage
+  const { error: uploadError } = await admin.storage
     .from("knowledge-base")
     .upload(storagePath, buffer, { contentType: "image/png" });
 
   if (uploadError)
     throw new Error(`Failed to save image: ${uploadError.message}`);
 
-  const { data: publicUrlData } = supabase.storage
+  const { data: signedUrlData, error: signError } = await admin.storage
     .from("knowledge-base")
-    .getPublicUrl(storagePath);
+    .createSignedUrl(storagePath, 60 * 60 * 24 * 365); // valid ~1 year
 
-  if (!publicUrlData?.publicUrl)
-    throw new Error("Image saved, but couldn't create a permanent link.");
+  if (signError || !signedUrlData?.signedUrl)
+    throw new Error(
+      `Image saved, but couldn't create a link: ${signError?.message ?? "unknown error"}`
+    );
 
-  return publicUrlData.publicUrl;
+  return signedUrlData.signedUrl;
 }
 
 // ── READ-ONLY EXECUTORS ───────────────────────────────────────────────
