@@ -159,7 +159,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "change_member_role",
     description:
-      "Change an existing organization member's role. Identify the member by their email address. Note: this changes their displayed team role label — it does not transfer the organization's underlying billing/ownership record.",
+      "Change an existing organization member's role to Admin, Member, or Viewer. Identify the member by their email address. Cannot be used to make someone Owner — use initiate_ownership_transfer for that instead, which requires the recipient's acceptance.",
     mutating: true,
     parameters: {
       type: "object",
@@ -170,10 +170,26 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         },
         newRole: {
           type: "string",
-          description: "New role: 'owner', 'admin', 'member', or 'viewer'.",
+          description: "New role: 'admin', 'member', or 'viewer'. Not 'owner'.",
         },
       },
       required: ["email", "newRole"],
+    },
+  },
+  {
+    name: "initiate_ownership_transfer",
+    description:
+      "Start a real transfer of organization ownership to another person by email. Only the CURRENT actual owner can do this. This does not immediately transfer ownership — it generates an acceptance link that the recipient must open and accept while signed in with that email. The current user remains the owner until the recipient accepts.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        targetEmail: {
+          type: "string",
+          description: "Email of the person who should become the new owner. They don't need to be an existing member.",
+        },
+      },
+      required: ["targetEmail"],
     },
   },
   {
