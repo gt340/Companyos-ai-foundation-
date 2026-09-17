@@ -38,8 +38,8 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
   switch (tool) {
     case "invite_member":
       return `Invite ${args.email} as ${args.role}`;
-    case "change_member_role":
-      return `Change ${args.email}'s role to ${args.newRole}`;
+    case "initiate_ownership_transfer":
+      return `Start transferring ownership to ${args.targetEmail}`;
     case "update_organization_name":
       return `Update organization${args.name ? ` name to "${args.name}"` : ""}${
         args.slug ? `, slug to "${args.slug}"` : ""
