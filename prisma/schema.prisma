@@ -63,6 +63,32 @@ enum NotificationType {
   SYSTEM
 }
 
+// ── CEO Agent foundation enums ──
+
+enum AgentStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum MemoryType {
+  COMPANY_FACT
+  STRATEGIC_GOAL
+  FOUNDER_PREFERENCE
+  DECISION
+  REPORT_SUMMARY
+  BUSINESS_EVENT
+  INSIGHT
+  TASK_HISTORY
+}
+
+enum ReportStatus {
+  DRAFT
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
 // ───────────── Core identity ─────────────
 
 model User {
@@ -109,6 +135,9 @@ model Organization {
   settings      OrganizationSettings?
   activityLogs  ActivityLog[]
   notifications Notification[]
+
+  agents           Agent[]
+  executiveReports ExecutiveReport[]
 
   @@index([ownerId])
   @@map("organizations")
@@ -319,4 +348,123 @@ model Notification {
 
   @@index([userId, isRead])
   @@map("notifications")
+}
+
+// ═════════════════════════════════════════════════════════
+// CEO Agent foundation (Phase 6)
+// Only the CEO Agent is operational. This schema is written
+// to allow future specialized agents to plug in later without
+// a rewrite, but no other agent types are implemented yet —
+// see AgentMemory metadata below for how that stays true.
+// ═════════════════════════════════════════════════════════
+
+model Agent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Plain string, not an enum — a future agent type (e.g. "SALES") can be
+  // introduced without a schema migration. Only "CEO" is ever created by
+  // the app today.
+  type   String      @default("CEO")
+  name   String      @default("CEO Agent")
+  status AgentStatus @default(ACTIVE)
+
+  // Optional override of the active CEO System Prompt template's content
+  // for this specific organization. Null means "use the template as-is."
+  systemPromptOverride String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memories AgentMemory[]
+  reports  ExecutiveReport[]
+
+  @@unique([organizationId, type])
+  @@map("agents")
+}
+
+model AgentMemory {
+  id             String   @id @default(uuid()) @db.Uuid
+  // Plain scalar, not a Prisma relation — organization scoping is enforced
+  // via the agent relation below; this field exists for fast, direct
+  // filtering without an extra join.
+  organizationId String   @db.Uuid
+  agentId        String   @db.Uuid
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  type       MemoryType
+  content    String     @db.Text
+  importance Int        @default(3) // 1 (low) – 5 (critical)
+  confidence Int        @default(5) // 1 (uncertain) – 5 (certain)
+  sourceRef  String?    // e.g. a knowledge_documents id, an executive_reports id, or "user_stated"
+  createdBy  String?    @db.Uuid // userId, if a person stated this directly
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, agentId, type])
+  @@map("agent_memories")
+}
+
+model PromptTemplate {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  // e.g. "ceo_system", "executive_report", "executive_analysis",
+  // "company_overview", "strategic_planning", "risk_analysis",
+  // "kpi_analysis", "decision_summary"
+  purpose     String
+  agentType   String  @default("CEO")
+  description String?
+  content     String  @db.Text
+  version     Int     @default(1)
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([purpose, agentType, version])
+  @@map("prompt_templates")
+}
+
+model ExecutiveReport {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agentId        String       @db.Uuid
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  generatedBy     String       @db.Uuid // userId who requested it
+  title           String
+  reportingPeriod String?
+  status          ReportStatus @default(DRAFT)
+  summary         String?      @db.Text
+  errorMessage    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sections ReportSection[]
+
+  @@index([organizationId, createdAt])
+  @@map("executive_reports")
+}
+
+model ReportSection {
+  id       String          @id @default(uuid()) @db.Uuid
+  reportId String          @db.Uuid
+  report   ExecutiveReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  title       String
+  // e.g. "SUMMARY", "STATUS", "GOALS", "KPI", "SALES", "CUSTOMER",
+  // "MARKETING", "FINANCIAL", "OPERATIONAL", "RISK", "OPPORTUNITY",
+  // "DECISION", "ACTION", "DATA_GAP"
+  sectionType String
+  content     String          @db.Text
+  priority    Int             @default(3)
+  sourceRefs  String[]        @default([])
+  order       Int             @default(0)
+
+  @@index([reportId, order])
+  @@map("report_sections")
 }
