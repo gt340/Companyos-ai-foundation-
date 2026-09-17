@@ -22,6 +22,7 @@ interface ExecutorContext {
   organizationId: string;
   userId: string;
   role: RoleKey;
+  agentId: string; // this organization's CEO Agent record
   // Populated by the chat route (only for the current turn) when the
   // user's latest message includes an attached image — used by
   // edit_image. Not present when called from the execute-action route.
@@ -61,6 +62,106 @@ function assertPermission(toolName: string, ctx: ExecutorContext) {
         .join(" or ")} can do this — your role is ${ctx.role}.`
     );
   }
+}
+
+// ── CEO AGENT FOUNDATION: prompt templates + agent seeding ─────────────
+// Prompt templates are global (shared definitions of CEO behavior across
+// every organization) — each organization gets its own Agent row, but not
+// its own copy of the templates.
+
+const CEO_PROMPT_TEMPLATES: {
+  purpose: string;
+  name: string;
+  description: string;
+  content: string;
+}[] = [
+  {
+    purpose: "ceo_system",
+    name: "CEO System Prompt",
+    description: "Core identity and ground rules for the CEO Agent.",
+    content:
+      "You are the CEO Agent — an AI executive assistant to this company's founder/owner, operating inside CompanyOS AI. You have access to the company's real profile, knowledge base, and memory. You must never invent company facts, financial figures, KPIs, or business data that hasn't actually been provided to you. When information is unavailable, state clearly that it is unavailable rather than guessing or estimating. Think and communicate like a sharp, honest chief of staff: direct, concise, and grounded only in what's actually known about the company.",
+  },
+  {
+    purpose: "executive_analysis",
+    name: "Executive Analysis Prompt",
+    description: "General-purpose grounded analysis of company information.",
+    content:
+      "Analyze the provided company information and answer the request. Base every claim on the company context, knowledge base results, and memory given to you — do not introduce outside assumptions about the business. If the information needed to fully answer isn't available, say so explicitly rather than filling the gap with a plausible-sounding guess.",
+  },
+  {
+    purpose: "executive_report",
+    name: "Executive Report Prompt",
+    description: "Structured executive report generation.",
+    content:
+      "Generate a structured executive report using only the company context, knowledge base excerpts, and memory provided. Produce these sections, skipping any with genuinely nothing to say: Executive Summary, Company Status, Key Goals, Key Performance Indicators, Sales/Revenue Insights, Customer Insights, Marketing Insights, Financial Insights, Operational Insights, Risks, Opportunities, Important Decisions, Recommended Next Actions, Information Gaps. Label each piece of content as one of: FACT (directly stated in the provided data), ANALYSIS (your reasoning about the facts), INSIGHT (a pattern or implication you've identified), RECOMMENDATION (a suggested action), or DATA GAP (something relevant that isn't available). If a data source (financials, sales, marketing, etc.) isn't connected, say plainly that it isn't connected in that section rather than inventing numbers. Never fabricate revenue, profit, customer counts, or any other business metric.",
+  },
+  {
+    purpose: "company_overview",
+    name: "Company Overview Prompt",
+    description: "Grounded summary of the company's stored profile.",
+    content:
+      "Summarize the company's identity based only on its stored profile: name, industry, mission, vision, goals, products, services, target customers, competitors, and team structure. Note plainly which of these fields are empty or unset rather than inferring them.",
+  },
+  {
+    purpose: "strategic_planning",
+    name: "Strategic Planning Prompt",
+    description: "Grounded strategic planning assistance.",
+    content:
+      "Help the founder think through strategic plans using the company's actual goals, mission, and known context. Ask clarifying questions where the request is ambiguous. Ground every suggestion in the company's real stated goals and constraints, and flag clearly if a plan would require information that isn't currently available.",
+  },
+  {
+    purpose: "risk_analysis",
+    name: "Risk Analysis Prompt",
+    description: "Grounded business risk identification.",
+    content:
+      "Identify potential business risks based only on what is actually known about the company: its industry, stage, team size, stated goals, and anything documented in its knowledge base or memory. Do not invent hypothetical financial or legal risks that aren't grounded in the company's real, known context. Clearly distinguish a risk you identified from the company's actual data versus a general industry consideration you're raising for awareness.",
+  },
+  {
+    purpose: "kpi_analysis",
+    name: "KPI Analysis Prompt",
+    description: "Grounded KPI analysis with explicit gap reporting.",
+    content:
+      "Analyze available key performance indicators using only what has actually been provided. If no KPI data source is connected, state clearly that KPI tracking isn't connected yet and describe what would need to be integrated to support this, rather than presenting any placeholder or estimated numbers.",
+  },
+  {
+    purpose: "decision_summary",
+    name: "Decision Summary Prompt",
+    description: "Summarizing and logging a business decision.",
+    content:
+      "Summarize a business decision the founder is making or has made, based on the conversation and stored memory. Capture the decision itself and the reasoning behind it as actually stated by the founder — do not add reasoning they didn't give. If asked to remember it, treat it as a DECISION-type memory.",
+  },
+];
+
+async function ensurePromptTemplatesSeeded() {
+  const count = await prisma.promptTemplate.count({ where: { agentType: "CEO" } });
+  if (count >= CEO_PROMPT_TEMPLATES.length) return;
+
+  for (const t of CEO_PROMPT_TEMPLATES) {
+    await prisma.promptTemplate.upsert({
+      where: {
+        purpose_agentType_version: { purpose: t.purpose, agentType: "CEO", version: 1 },
+      },
+      update: {},
+      create: {
+        name: t.name,
+        purpose: t.purpose,
+        agentType: "CEO",
+        description: t.description,
+        content: t.content,
+        version: 1,
+        isActive: true,
+      },
+    });
+  }
+}
+
+async function ensureCeoAgent(organizationId: string) {
+  return prisma.agent.upsert({
+    where: { organizationId_type: { organizationId, type: "CEO" } },
+    update: {},
+    create: { organizationId, type: "CEO", name: "CEO Agent" },
+  });
 }
 
 // ── SHARED CHUNKING/EMBEDDING HELPER ────────────────────────────────────
@@ -120,9 +221,6 @@ async function embedAndStoreChunks(
 }
 
 // ── SHARED IMAGE STORAGE HELPER ─────────────────────────────────────────
-// Uses the admin/service-role Supabase client (bypassing RLS entirely)
-// and a signed URL — the same proven approach the real file-upload route
-// uses — rather than assuming the "knowledge-base" bucket is public.
 
 async function uploadImageToStorage(
   buffer: Buffer,
@@ -432,9 +530,6 @@ async function initiateOwnershipTransfer(
     where: { id: ctx.organizationId },
   });
 
-  // Defense in depth: check the real Organization.ownerId field directly,
-  // not just the Role label — matching the real API route's own check
-  // exactly, and guarding against the two ever having drifted apart.
   if (!organization || organization.ownerId !== ctx.userId) {
     throw new Error("Only the current owner can transfer ownership.");
   }
@@ -745,5 +840,13 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
 
   if (!membership) throw new Error("Not a member of this organization");
 
-  return { organizationId, userId: user.id, role: membership.role.key };
+  await ensurePromptTemplatesSeeded();
+  const agent = await ensureCeoAgent(organizationId);
+
+  return {
+    organizationId,
+    userId: user.id,
+    role: membership.role.key,
+    agentId: agent.id,
+  };
 }
