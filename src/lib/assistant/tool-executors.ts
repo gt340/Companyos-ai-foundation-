@@ -12,6 +12,12 @@ import type { RoleKey } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
+// No custom domain yet — production is this fixed Vercel URL. If a custom
+// domain is ever added, update this (a tool executor has no access to the
+// incoming request's origin the way a route handler does).
+const APP_BASE_URL =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://companyos-ai-foundation.vercel.app";
+
 interface ExecutorContext {
   organizationId: string;
   userId: string;
@@ -30,6 +36,11 @@ const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
   edit_image: ["OWNER", "ADMIN"],
   invite_member: ["OWNER", "ADMIN"],
   change_member_role: ["OWNER", "ADMIN"],
+  // Deliberately OWNER only — matches the real transfer-ownership/initiate
+  // endpoint's own rule, and is double-checked directly against
+  // Organization.ownerId inside the executor below (not just the Role
+  // label), since keeping those in sync is the whole point of this tool.
+  initiate_ownership_transfer: ["OWNER"],
   update_organization_name: ["OWNER", "ADMIN"],
   update_security_settings: ["OWNER", "ADMIN"],
   update_notification_settings: ["OWNER", "ADMIN"],
@@ -45,7 +56,9 @@ function assertPermission(toolName: string, ctx: ExecutorContext) {
 
   if (!allowedRoles.includes(ctx.role)) {
     throw new Error(
-      `You don't have permission to approve this action. Only Owners and Admins can do this — your role is ${ctx.role}.`
+      `You don't have permission to approve this action. Only ${allowedRoles
+        .map((r) => (r === "OWNER" ? "the Owner" : r.charAt(0) + r.slice(1).toLowerCase() + "s"))
+        .join(" or ")} can do this — your role is ${ctx.role}.`
     );
   }
 }
@@ -356,7 +369,14 @@ async function changeMemberRole(
   ctx: ExecutorContext
 ) {
   const roleKey = args.newRole.toUpperCase() as RoleKey;
-  if (!["OWNER", "ADMIN", "MEMBER", "VIEWER"].includes(roleKey)) {
+
+  if (roleKey === "OWNER") {
+    throw new Error(
+      "Can't set someone to Owner this way. Use initiate_ownership_transfer instead — real ownership transfer requires the recipient to accept an invite link."
+    );
+  }
+
+  if (!["ADMIN", "MEMBER", "VIEWER"].includes(roleKey)) {
     throw new Error(`Invalid role: ${args.newRole}`);
   }
 
@@ -365,12 +385,18 @@ async function changeMemberRole(
       organizationId: ctx.organizationId,
       user: { email: args.email },
     },
-    include: { user: true },
+    include: { user: true, role: true },
   });
 
   if (!membership) {
     throw new Error(
       `No member with email ${args.email} found in this organization.`
+    );
+  }
+
+  if (membership.role.key === "OWNER") {
+    throw new Error(
+      "Can't change the current Owner's role this way. Use initiate_ownership_transfer to hand off ownership first."
     );
   }
 
@@ -389,13 +415,78 @@ async function changeMemberRole(
     data: { roleId: role.id },
   });
 
+  return { email: args.email, newRole: roleKey };
+}
+
+async function initiateOwnershipTransfer(
+  args: { targetEmail: string },
+  ctx: ExecutorContext
+) {
+  const targetEmail = args.targetEmail.trim().toLowerCase();
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+    throw new Error("Enter a valid email address.");
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: { id: ctx.organizationId },
+  });
+
+  // Defense in depth: check the real Organization.ownerId field directly,
+  // not just the Role label — matching the real API route's own check
+  // exactly, and guarding against the two ever having drifted apart.
+  if (!organization || organization.ownerId !== ctx.userId) {
+    throw new Error("Only the current owner can transfer ownership.");
+  }
+
+  const requester = await prisma.user.findUnique({ where: { id: ctx.userId } });
+  if (requester?.email?.toLowerCase() === targetEmail) {
+    throw new Error("You already own this organization.");
+  }
+
+  const supabase = await createClient();
+
+  await supabase
+    .from("ownership_transfers")
+    .update({ status: "CANCELLED" })
+    .eq("organizationId", ctx.organizationId)
+    .eq("status", "PENDING");
+
+  const targetUser = await prisma.user.findUnique({ where: { email: targetEmail } });
+  const token = crypto.randomBytes(24).toString("hex");
+
+  const { data: transfer, error: insertError } = await supabase
+    .from("ownership_transfers")
+    .insert({
+      organizationId: ctx.organizationId,
+      currentOwnerId: ctx.userId,
+      targetEmail,
+      targetUserId: targetUser?.id ?? null,
+      token,
+    })
+    .select()
+    .single();
+
+  if (insertError || !transfer) {
+    throw new Error(insertError?.message ?? "Couldn't start the transfer.");
+  }
+
+  await prisma.activityLog.create({
+    data: {
+      organizationId: ctx.organizationId,
+      actorId: ctx.userId,
+      category: "ORGANIZATION",
+      action: "organization.ownership_transfer_initiated",
+      metadata: { targetEmail },
+    },
+  });
+
+  const transferUrl = `${APP_BASE_URL}/transfer-ownership/${token}`;
+
   return {
-    email: args.email,
-    newRole: roleKey,
-    note:
-      roleKey === "OWNER"
-        ? "This updates their team role label to Owner. It does not transfer the organization's underlying billing/ownership record — that's a separate setting."
-        : undefined,
+    targetEmail,
+    transferUrl,
+    note: "The recipient must open this link while signed in with that email and accept it. You remain the owner until they do.",
   };
 }
 
@@ -612,6 +703,7 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   get_organization_settings: getOrganizationSettings,
   invite_member: inviteMember,
   change_member_role: changeMemberRole,
+  initiate_ownership_transfer: initiateOwnershipTransfer,
   update_organization_name: updateOrganizationName,
   update_security_settings: updateSecuritySettings,
   update_notification_settings: updateNotificationSettings,
