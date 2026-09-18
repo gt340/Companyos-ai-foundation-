@@ -133,6 +133,82 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["prompt"],
     },
   },
+  {
+    name: "list_executive_reports",
+    description:
+      "List previously generated executive reports for this organization, most recent first.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Max number of reports to return. Defaults to 10.",
+        },
+      },
+    },
+  },
+  {
+    name: "get_executive_report",
+    description:
+      "Get the full content of a specific executive report, including all its sections.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        reportId: {
+          type: "string",
+          description: "ID of the report to retrieve.",
+        },
+      },
+      required: ["reportId"],
+    },
+  },
+  {
+    name: "list_ceo_memories",
+    description:
+      "List what the CEO Agent currently remembers about this company, optionally filtered by type. Use this before answering questions about past decisions, stated goals, or founder preferences.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          description:
+            "Optional filter: 'company_fact', 'strategic_goal', 'founder_preference', 'decision', 'business_event', or 'insight'.",
+        },
+        limit: {
+          type: "number",
+          description: "Max number of memories to return. Defaults to 20.",
+        },
+      },
+    },
+  },
+  {
+    name: "remember_ceo_insight",
+    description:
+      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in executive reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term. Does not change core company data, so it runs immediately without requiring confirmation.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        type: {
+          type: "string",
+          description:
+            "Memory type: 'company_fact', 'strategic_goal', 'founder_preference', 'decision', 'business_event', or 'insight'.",
+        },
+        content: {
+          type: "string",
+          description: "The information to remember.",
+        },
+        importance: {
+          type: "number",
+          description: "1 (low) to 5 (critical). Defaults to 3.",
+        },
+      },
+      required: ["type", "content"],
+    },
+  },
 
   // ── MUTATING TOOLS (require user confirmation before executing) ────
 
@@ -325,6 +401,25 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         },
       },
       required: ["documentId"],
+    },
+  },
+  {
+    name: "generate_executive_report",
+    description:
+      "Generate a structured executive report using only the company's actual profile, knowledge base, and CEO memory — never fabricates data. Sections for unavailable data sources (financials, sales, marketing, etc.) will say so explicitly rather than inventing numbers. The report is saved permanently and appears in the Executive Dashboard.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Optional title for the report. Defaults to 'Executive Report — <date>'.",
+        },
+        reportingPeriod: {
+          type: "string",
+          description: "Optional label for the period this report covers, e.g. 'Q3 2026'.",
+        },
+      },
     },
   },
 ];
