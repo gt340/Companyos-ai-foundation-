@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl, cleanText } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
-import type { RoleKey } from "@prisma/client";
+import type { RoleKey, MemoryType } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -49,6 +49,8 @@ const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
   create_document_draft: ["OWNER", "ADMIN"],
   update_document_content: ["OWNER", "ADMIN"],
   delete_knowledge_document: ["OWNER", "ADMIN"],
+  generate_executive_report: ["OWNER", "ADMIN"],
+  remember_ceo_insight: ["OWNER", "ADMIN"],
 };
 
 function assertPermission(toolName: string, ctx: ExecutorContext) {
@@ -65,9 +67,6 @@ function assertPermission(toolName: string, ctx: ExecutorContext) {
 }
 
 // ── CEO AGENT FOUNDATION: prompt templates + agent seeding ─────────────
-// Prompt templates are global (shared definitions of CEO behavior across
-// every organization) — each organization gets its own Agent row, but not
-// its own copy of the templates.
 
 const CEO_PROMPT_TEMPLATES: {
   purpose: string;
@@ -438,6 +437,77 @@ async function editImage(args: { prompt: string }, ctx: ExecutorContext) {
   return { url, revisedPrompt: args.prompt };
 }
 
+const VALID_MEMORY_TYPES = [
+  "COMPANY_FACT",
+  "STRATEGIC_GOAL",
+  "FOUNDER_PREFERENCE",
+  "DECISION",
+  "REPORT_SUMMARY",
+  "BUSINESS_EVENT",
+  "INSIGHT",
+  "TASK_HISTORY",
+];
+
+async function listCeoMemories(
+  args: { type?: string; limit?: number },
+  ctx: ExecutorContext
+) {
+  const type = args.type?.toUpperCase();
+  if (type && !VALID_MEMORY_TYPES.includes(type)) {
+    throw new Error(`Invalid memory type: ${args.type}`);
+  }
+
+  const memories = await prisma.agentMemory.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      agentId: ctx.agentId,
+      ...(type ? { type: type as MemoryType } : {}),
+    },
+    orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
+    take: args.limit ?? 20,
+  });
+
+  return memories.map((m) => ({
+    id: m.id,
+    type: m.type,
+    content: m.content,
+    importance: m.importance,
+    createdAt: m.createdAt,
+  }));
+}
+
+async function listExecutiveReports(
+  args: { limit?: number },
+  ctx: ExecutorContext
+) {
+  return prisma.executiveReport.findMany({
+    where: { organizationId: ctx.organizationId },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 10,
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      reportingPeriod: true,
+      summary: true,
+      createdAt: true,
+    },
+  });
+}
+
+async function getExecutiveReport(
+  args: { reportId: string },
+  ctx: ExecutorContext
+) {
+  const report = await prisma.executiveReport.findFirst({
+    where: { id: args.reportId, organizationId: ctx.organizationId },
+    include: { sections: { orderBy: { order: "asc" } } },
+  });
+
+  if (!report) throw new Error("Report not found in this organization.");
+  return report;
+}
+
 // ── MUTATING EXECUTORS (only called after user confirms) ───────────────
 
 async function inviteMember(
@@ -782,6 +852,201 @@ async function deleteKnowledgeDocument(
   return { deleted: true, documentId: args.documentId };
 }
 
+async function rememberCeoInsight(
+  args: { type: string; content: string; importance?: number },
+  ctx: ExecutorContext
+) {
+  const type = args.type.toUpperCase();
+  if (!VALID_MEMORY_TYPES.includes(type)) {
+    throw new Error(`Invalid memory type: ${args.type}`);
+  }
+
+  const memory = await prisma.agentMemory.create({
+    data: {
+      organizationId: ctx.organizationId,
+      agentId: ctx.agentId,
+      type: type as MemoryType,
+      content: args.content,
+      importance: Math.min(5, Math.max(1, args.importance ?? 3)),
+      createdBy: ctx.userId,
+    },
+  });
+
+  return { id: memory.id, type: memory.type };
+}
+
+interface GeneratedReportSection {
+  title: string;
+  sectionType: string;
+  content: string;
+  priority?: number;
+  sourceRefs?: string[];
+}
+
+async function generateExecutiveReport(
+  args: { title?: string; reportingPeriod?: string },
+  ctx: ExecutorContext
+) {
+  const [company, organization, memories, systemTemplate, reportTemplate] =
+    await Promise.all([
+      prisma.company.findUnique({ where: { organizationId: ctx.organizationId } }),
+      prisma.organization.findUnique({ where: { id: ctx.organizationId } }),
+      prisma.agentMemory.findMany({
+        where: { organizationId: ctx.organizationId, agentId: ctx.agentId },
+        orderBy: { importance: "desc" },
+        take: 20,
+      }),
+      prisma.promptTemplate.findFirst({
+        where: { purpose: "ceo_system", agentType: "CEO", isActive: true },
+      }),
+      prisma.promptTemplate.findFirst({
+        where: { purpose: "executive_report", agentType: "CEO", isActive: true },
+      }),
+    ]);
+
+  if (!reportTemplate) {
+    throw new Error("The executive report prompt template isn't set up yet.");
+  }
+
+  // Best-effort knowledge base excerpts — don't fail the whole report if
+  // the knowledge base search itself errors.
+  let knowledgeExcerpts: string[] = [];
+  try {
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: "company overview goals performance strategy",
+    });
+    const supabase = await createClient();
+    const { data: results } = await supabase.rpc("match_knowledge_chunks", {
+      query_embedding: embeddingResponse.data[0]!.embedding,
+      match_organization_id: ctx.organizationId,
+      match_count: 6,
+      match_category: null,
+    });
+    knowledgeExcerpts = (results ?? []).map(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (r: any) => `[${r.title}] ${r.content}`
+    );
+  } catch {
+    // Knowledge base context is optional — proceed without it.
+  }
+
+  const companyContext = company
+    ? [
+        `Company name: ${organization?.name ?? "Unknown"}`,
+        `Industry: ${company.industry}`,
+        `Website: ${company.website ?? "Not set"}`,
+        `Business size: ${company.businessSize}`,
+        `Mission: ${company.mission ?? "Not set"}`,
+        `Vision: ${company.vision ?? "Not set"}`,
+        `Goals: ${company.goals.length ? company.goals.join("; ") : "Not set"}`,
+        `Products: ${company.products.length ? company.products.join("; ") : "Not set"}`,
+        `Services: ${company.services.length ? company.services.join("; ") : "Not set"}`,
+        `Target customers: ${company.targetCustomers ?? "Not set"}`,
+        `Competitors: ${company.competitors.length ? company.competitors.join("; ") : "Not set"}`,
+        `Employee count: ${company.employeeCount ?? "Not set"}`,
+      ].join("\n")
+    : "No company profile has been completed yet — onboarding was not finished.";
+
+  const memoryContext = memories.length
+    ? memories.map((m) => `[${m.type}] ${m.content}`).join("\n")
+    : "No stored CEO memory yet.";
+
+  const knowledgeContext = knowledgeExcerpts.length
+    ? knowledgeExcerpts.join("\n\n")
+    : "No relevant knowledge base documents found.";
+
+  const report = await prisma.executiveReport.create({
+    data: {
+      organizationId: ctx.organizationId,
+      agentId: ctx.agentId,
+      generatedBy: ctx.userId,
+      title: args.title || `Executive Report — ${new Date().toLocaleDateString()}`,
+      reportingPeriod: args.reportingPeriod,
+      status: "GENERATING",
+    },
+  });
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: systemTemplate?.content ?? "You are the CEO Agent.",
+        },
+        {
+          role: "user",
+          content: `${reportTemplate.content}
+
+COMPANY CONTEXT:
+${companyContext}
+
+RELEVANT KNOWLEDGE BASE EXCERPTS:
+${knowledgeContext}
+
+RELEVANT CEO MEMORY:
+${memoryContext}
+
+Return ONLY a JSON object shaped exactly like this:
+{
+  "summary": "2-4 sentence executive summary",
+  "sections": [
+    { "title": "string", "sectionType": "SUMMARY|STATUS|GOALS|KPI|SALES|CUSTOMER|MARKETING|FINANCIAL|OPERATIONAL|RISK|OPPORTUNITY|DECISION|ACTION|DATA_GAP", "content": "string, include FACT/ANALYSIS/INSIGHT/RECOMMENDATION/DATA GAP labels inline where relevant", "priority": 1-5, "sourceRefs": ["string", ...] }
+  ]
+}
+Omit sections with genuinely nothing to say rather than padding with empty content.`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw) throw new Error("The model returned no content.");
+
+    let parsed: { summary?: string; sections?: GeneratedReportSection[] };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("The model's response wasn't valid JSON.");
+    }
+
+    const sections = parsed.sections ?? [];
+
+    await prisma.$transaction([
+      prisma.reportSection.createMany({
+        data: sections.map((s, i) => ({
+          reportId: report.id,
+          title: s.title,
+          sectionType: s.sectionType,
+          content: s.content,
+          priority: s.priority ?? 3,
+          sourceRefs: s.sourceRefs ?? [],
+          order: i,
+        })),
+      }),
+      prisma.executiveReport.update({
+        where: { id: report.id },
+        data: { status: "COMPLETED", summary: parsed.summary ?? null },
+      }),
+    ]);
+
+    return {
+      reportId: report.id,
+      title: report.title,
+      summary: parsed.summary,
+      sectionTitles: sections.map((s) => s.title),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    await prisma.executiveReport.update({
+      where: { id: report.id },
+      data: { status: "FAILED", errorMessage: message },
+    });
+    throw err;
+  }
+}
+
 // ── DISPATCH TABLE ──────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -796,6 +1061,9 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   get_activity_logs: getActivityLogs,
   get_notifications: getNotifications,
   get_organization_settings: getOrganizationSettings,
+  list_ceo_memories: listCeoMemories,
+  list_executive_reports: listExecutiveReports,
+  get_executive_report: getExecutiveReport,
   invite_member: inviteMember,
   change_member_role: changeMemberRole,
   initiate_ownership_transfer: initiateOwnershipTransfer,
@@ -807,6 +1075,8 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   create_document_draft: createDocumentDraft,
   update_document_content: updateDocumentContent,
   delete_knowledge_document: deleteKnowledgeDocument,
+  remember_ceo_insight: rememberCeoInsight,
+  generate_executive_report: generateExecutiveReport,
 };
 
 export async function executeTool(
