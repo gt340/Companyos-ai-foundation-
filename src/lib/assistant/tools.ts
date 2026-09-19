@@ -136,7 +136,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "list_executive_reports",
     description:
-      "List previously generated executive reports for this organization, most recent first.",
+      "List previously generated executive reports (including strategic plans and risk analyses) for this organization, most recent first.",
     mutating: false,
     parameters: {
       type: "object",
@@ -151,7 +151,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "get_executive_report",
     description:
-      "Get the full content of a specific executive report, including all its sections.",
+      "Get the full content of a specific report (executive report, strategic plan, or risk analysis), including all its sections.",
     mutating: false,
     parameters: {
       type: "object",
@@ -187,7 +187,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "remember_ceo_insight",
     description:
-      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in executive reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term. Does not change core company data, so it runs immediately without requiring confirmation.",
+      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term. Does not change core company data, so it runs immediately without requiring confirmation.",
     mutating: false,
     parameters: {
       type: "object",
@@ -406,7 +406,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "generate_executive_report",
     description:
-      "Generate a structured executive report using only the company's actual profile, knowledge base, and CEO memory — never fabricates data. Sections for unavailable data sources (financials, sales, marketing, etc.) will say so explicitly rather than inventing numbers. The report is saved permanently and appears in the Executive Dashboard.",
+      "Generate a broad, structured executive report using only the company's actual profile, knowledge base, and CEO memory — never fabricates data. Sections for unavailable data sources (financials, sales, marketing, etc.) will say so explicitly rather than inventing numbers. The report is saved permanently and appears in the Executive Dashboard. For a report focused specifically on strategy, use generate_strategic_plan instead; for one focused on risk, use generate_risk_analysis.",
     mutating: true,
     parameters: {
       type: "object",
@@ -418,6 +418,59 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         reportingPeriod: {
           type: "string",
           description: "Optional label for the period this report covers, e.g. 'Q3 2026'.",
+        },
+        focusArea: {
+          type: "string",
+          description:
+            "Optional: narrow the report to a specific topic the user asked about (e.g. 'our hiring plans', 'the Q3 product launch'), instead of a fully general report.",
+        },
+      },
+    },
+  },
+  {
+    name: "generate_strategic_plan",
+    description:
+      "Generate a structured strategic planning report — grounded only in the company's actual stated goals, mission, and known context (profile, knowledge base, CEO memory). Never invents goals or metrics the founder hasn't stated. Clearly flags where a solid plan would need information that isn't currently available. Saved permanently and appears in the Executive Dashboard alongside executive reports.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Optional title for the plan. Defaults to 'Strategic Plan — <date>'.",
+        },
+        reportingPeriod: {
+          type: "string",
+          description: "Optional label for the period this plan covers, e.g. 'Q3 2026'.",
+        },
+        focusArea: {
+          type: "string",
+          description:
+            "Optional: what to focus the strategic plan on (e.g. 'expanding into a new market', 'our hiring roadmap'). If omitted, produces a general strategic overview.",
+        },
+      },
+    },
+  },
+  {
+    name: "generate_risk_analysis",
+    description:
+      "Generate a structured risk analysis — grounded only in what's actually known about the company (industry, stage, team size, stated goals, knowledge base, CEO memory). Never invents hypothetical financial or legal risks unconnected to real company data; clearly distinguishes a risk grounded in real company data from a general industry consideration raised for awareness. Saved permanently and appears in the Executive Dashboard alongside executive reports.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Optional title for the analysis. Defaults to 'Risk Analysis — <date>'.",
+        },
+        reportingPeriod: {
+          type: "string",
+          description: "Optional label for the period this analysis covers, e.g. 'Q3 2026'.",
+        },
+        focusArea: {
+          type: "string",
+          description:
+            "Optional: what to focus the risk analysis on (e.g. 'our hiring plans', 'the new product launch'). If omitted, produces a general risk overview.",
         },
       },
     },
