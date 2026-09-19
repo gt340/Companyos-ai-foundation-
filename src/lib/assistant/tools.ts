@@ -17,7 +17,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "search_knowledge_base",
     description:
-      "Semantic search over the organization's uploaded knowledge base documents (PDFs, Word, Excel, PowerPoint, images, audio/video transcripts, website URLs). Use this whenever the user asks a question that might be answered by company documents.",
+      "Semantic search over the organization's uploaded knowledge base documents (PDFs, Word, Excel, PowerPoint, images, audio/video transcripts, website URLs already ingested). Use this whenever the user asks a question that might be answered by company documents that have already been added. This does NOT search the live internet — use search_web for that.",
     mutating: false,
     parameters: {
       type: "object",
@@ -29,6 +29,26 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         limit: {
           type: "number",
           description: "Max number of chunks to return. Defaults to 5.",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "search_web",
+    description:
+      "Search the live internet for current, external information — market research, competitor information, industry news, general facts not covered by the company's own knowledge base. Use this when the user asks you to search online, look something up, or research a topic outside the company's own documents. Returns a list of results with titles, URLs, and short snippets — not full page content. Does not change any company data, so it runs immediately without requiring confirmation.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "The web search query, in natural language.",
+        },
+        maxResults: {
+          type: "number",
+          description: "Max number of results to return. Defaults to 5.",
         },
       },
       required: ["query"],
@@ -187,7 +207,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "remember_ceo_insight",
     description:
-      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term. Does not change core company data, so it runs immediately without requiring confirmation.",
+      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term — including useful findings from a web search the founder wants kept. Does not change core company data, so it runs immediately without requiring confirmation.",
     mutating: false,
     parameters: {
       type: "object",
@@ -332,7 +352,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "create_knowledge_document",
     description:
-      "Create a knowledge base document from a website URL (not for file uploads — those go through the upload UI). Use when the user asks the assistant to ingest a specific URL.",
+      "Create a knowledge base document from a website URL (not for file uploads — those go through the upload UI). Use when the user asks the assistant to ingest a specific URL — for example, one found via search_web that they want kept permanently and made searchable.",
     mutating: true,
     parameters: {
       type: "object",
