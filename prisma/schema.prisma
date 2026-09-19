@@ -89,6 +89,61 @@ enum ReportStatus {
   FAILED
 }
 
+// ── Sales Agent / CRM enums (Phase 7) ──
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  UNQUALIFIED
+  CONVERTED
+  LOST
+}
+
+enum DealStatus {
+  OPEN
+  WON
+  LOST
+}
+
+enum SalesTaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum CommunicationChannel {
+  EMAIL
+  CALL
+  MEETING
+  NOTE
+  SMS
+}
+
+enum SalesDocumentKind {
+  QUOTATION
+  PROPOSAL
+}
+
+enum SalesDocumentStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+}
+
+// Shared across agent types (CEO today, Sales as of Phase 7) — one
+// approval lifecycle for any sensitive AI-proposed action.
+enum ApprovalStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXECUTED
+  FAILED
+}
+
 // ───────────── Core identity ─────────────
 
 model User {
@@ -111,6 +166,17 @@ model User {
   activityLogs     ActivityLog[]
   notifications    Notification[]
   ownedOrgs        Organization[]   @relation("OrganizationOwner")
+
+  // Phase 7 — Sales Agent / CRM back-relations
+  leadsAssigned           Lead[]             @relation("LeadAssignedTo")
+  dealsOwned              Deal[]             @relation("DealSalesOwner")
+  salesTasksAssigned      SalesTask[]        @relation("SalesTaskAssignedTo")
+  salesTasksCreated       SalesTask[]        @relation("SalesTaskCreatedBy")
+  followUpsCreated        FollowUp[]         @relation("FollowUpCreatedBy")
+  communicationLogsMade   CommunicationLog[] @relation("CommunicationLogCreatedBy")
+  salesDocumentsCreated   SalesDocument[]    @relation("SalesDocumentCreatedBy")
+  approvalRequestsMade    ApprovalRequest[]  @relation("ApprovalRequestedBy")
+  approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewedBy")
 
   @@map("users")
 }
@@ -138,6 +204,19 @@ model Organization {
 
   agents           Agent[]
   executiveReports ExecutiveReport[]
+
+  // Phase 7 — Sales Agent / CRM back-relations
+  crmCompanies      CrmCompany[]
+  pipelineStages    PipelineStage[]
+  leads             Lead[]
+  contacts          Contact[]
+  deals             Deal[]
+  salesTasks        SalesTask[]
+  followUps         FollowUp[]
+  communicationLogs CommunicationLog[]
+  salesDocuments    SalesDocument[]
+  approvalRequests  ApprovalRequest[]
+  agentActionLogs   AgentActionLog[]
 
   @@index([ownerId])
   @@map("organizations")
@@ -364,13 +443,13 @@ model Agent {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Plain string, not an enum — a future agent type (e.g. "SALES") can be
-  // introduced without a schema migration. Only "CEO" is ever created by
-  // the app today.
+  // introduced without a schema migration. "CEO" and, as of Phase 7,
+  // "SALES" are the app-created values today.
   type   String      @default("CEO")
   name   String      @default("CEO Agent")
   status AgentStatus @default(ACTIVE)
 
-  // Optional override of the active CEO System Prompt template's content
+  // Optional override of the active System Prompt template's content
   // for this specific organization. Null means "use the template as-is."
   systemPromptOverride String? @db.Text
 
@@ -379,6 +458,10 @@ model Agent {
 
   memories AgentMemory[]
   reports  ExecutiveReport[]
+
+  // Phase 7 — Sales Agent back-relations
+  approvalRequests ApprovalRequest[]
+  actionLogs       AgentActionLog[]
 
   @@unique([organizationId, type])
   @@map("agents")
@@ -412,7 +495,7 @@ model PromptTemplate {
   name        String
   // e.g. "ceo_system", "executive_report", "executive_analysis",
   // "company_overview", "strategic_planning", "risk_analysis",
-  // "kpi_analysis", "decision_summary"
+  // "kpi_analysis", "decision_summary", plus Phase 7 sales purposes
   purpose     String
   agentType   String  @default("CEO")
   description String?
@@ -467,4 +550,309 @@ model ReportSection {
 
   @@index([reportId, order])
   @@map("report_sections")
+}
+
+// ═════════════════════════════════════════════════════════
+// Sales Agent / CRM (Phase 7)
+// Schema below matches the live database exactly — these
+// tables were already created directly in Supabase (outside
+// this schema file) before this file was updated to describe
+// them. Field names, types, and enum values are taken from
+// the real table definitions, not designed independently.
+// ═════════════════════════════════════════════════════════
+
+model CrmCompany {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name     String
+  industry String?
+  website  String?
+  notes    String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  leads    Lead[]
+  contacts Contact[]
+  deals    Deal[]
+
+  @@index([organizationId])
+  @@map("crm_companies")
+}
+
+model PipelineStage {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name   String
+  order  Int     @default(0)
+  isWon  Boolean @default(false)
+  isLost Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  deals Deal[]
+
+  @@index([organizationId])
+  @@map("pipeline_stages")
+}
+
+model Lead {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  crmCompanyId String?     @db.Uuid
+  crmCompany   CrmCompany? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+
+  name              String
+  email             String?
+  phone             String?
+  jobTitle          String?
+  source            String?
+  status            LeadStatus @default(NEW)
+  score             Int        @default(0)
+  aiConfidenceScore Int?
+  notes             String?    @db.Text
+
+  assignedToUserId String? @db.Uuid
+  assignedToUser   User?   @relation("LeadAssignedTo", fields: [assignedToUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts          Contact[]
+  deals             Deal[]
+  salesTasks        SalesTask[]
+  followUps         FollowUp[]
+  communicationLogs CommunicationLog[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@map("leads")
+}
+
+model Contact {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  crmCompanyId String?     @db.Uuid
+  crmCompany   CrmCompany? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  leadId       String?     @db.Uuid
+  lead         Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  name     String
+  email    String?
+  phone    String?
+  jobTitle String?
+  notes    String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deals             Deal[]
+  followUps         FollowUp[]
+  communicationLogs CommunicationLog[]
+
+  @@index([organizationId])
+  @@map("contacts")
+}
+
+model Deal {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  title String
+
+  leadId       String?        @db.Uuid
+  lead         Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  contactId    String?        @db.Uuid
+  contact      Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  crmCompanyId String?        @db.Uuid
+  crmCompany   CrmCompany?    @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  pipelineStageId String?     @db.Uuid
+  pipelineStage   PipelineStage? @relation(fields: [pipelineStageId], references: [id])
+
+  value    Decimal?   @db.Decimal
+  currency String     @default("USD")
+  status   DealStatus @default(OPEN)
+
+  expectedCloseDate DateTime?
+  actualCloseDate   DateTime?
+  aiConfidenceScore Int?
+  lostReason        String?   @db.Text
+
+  salesOwnerId String? @db.Uuid
+  salesOwner   User?   @relation("DealSalesOwner", fields: [salesOwnerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  salesTasks        SalesTask[]
+  followUps         FollowUp[]
+  communicationLogs CommunicationLog[]
+  salesDocuments    SalesDocument[]
+
+  @@index([organizationId])
+  @@map("deals")
+}
+
+model SalesTask {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  dealId String? @db.Uuid
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  leadId String? @db.Uuid
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?         @db.Text
+  dueDate     DateTime?
+  status      SalesTaskStatus @default(TODO)
+
+  assignedToUserId String? @db.Uuid
+  assignedToUser   User?   @relation("SalesTaskAssignedTo", fields: [assignedToUserId], references: [id])
+  createdBy        String? @db.Uuid
+  createdByUser    User?   @relation("SalesTaskCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("sales_tasks")
+}
+
+model FollowUp {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  dealId    String? @db.Uuid
+  deal      Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  leadId    String? @db.Uuid
+  lead      Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contactId String? @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  dueDate   DateTime
+  notes     String?  @db.Text
+  completed Boolean  @default(false)
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("FollowUpCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("follow_ups")
+}
+
+model CommunicationLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  dealId    String?  @db.Uuid
+  deal      Deal?    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  leadId    String?  @db.Uuid
+  lead      Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contactId String?  @db.Uuid
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  channel   CommunicationChannel
+  direction String? // "INBOUND" | "OUTBOUND" — plain string in the real table, not an enum
+  content   String  @db.Text
+
+  occurredAt DateTime @default(now())
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("CommunicationLogCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("communication_logs")
+}
+
+model SalesDocument {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  dealId String? @db.Uuid
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  kind       SalesDocumentKind
+  title      String
+  content    String              @db.Text
+  totalValue Decimal?            @db.Decimal
+  status     SalesDocumentStatus @default(DRAFT)
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("SalesDocumentCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dealId])
+  @@map("sales_documents")
+}
+
+// Shared across agent types — a Sales Agent request and a future agent's
+// request both live here, distinguished by agentId + actionType.
+model ApprovalRequest {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  agentId String @db.Uuid
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  actionType     String
+  proposedAction Json
+  status         ApprovalStatus @default(PENDING_APPROVAL)
+  reason         String?        @db.Text
+  result         Json?
+
+  requestedBy     String? @db.Uuid
+  requestedByUser User?   @relation("ApprovalRequestedBy", fields: [requestedBy], references: [id])
+  reviewedBy      String? @db.Uuid
+  reviewedByUser  User?   @relation("ApprovalReviewedBy", fields: [reviewedBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@map("approval_requests")
+}
+
+// The audit trail every AI agent action writes to (Agent, Action, Time,
+// Reason, Input, Output, Approval, Result) — separate from the older
+// ActivityLog, which covers human/system organizational events.
+model AgentActionLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  agentId String @db.Uuid
+  agent   Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  action         String
+  reason         String?         @db.Text
+  input          Json?
+  output         Json?
+  approvalStatus ApprovalStatus?
+  result         String?         @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("agent_action_logs")
 }
