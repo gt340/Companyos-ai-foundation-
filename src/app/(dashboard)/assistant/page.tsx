@@ -58,6 +58,18 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `Update document ${args.documentId} with new content`;
     case "delete_knowledge_document":
       return `Delete knowledge base document ${args.documentId}`;
+    case "generate_executive_report":
+      return `Generate an executive report${
+        args.title ? ` titled "${args.title}"` : ""
+      }${args.focusArea ? ` on ${args.focusArea}` : ""}`;
+    case "generate_strategic_plan":
+      return `Generate a strategic plan${
+        args.title ? ` titled "${args.title}"` : ""
+      }${args.focusArea ? ` on ${args.focusArea}` : ""}`;
+    case "generate_risk_analysis":
+      return `Generate a risk analysis${
+        args.title ? ` titled "${args.title}"` : ""
+      }${args.focusArea ? ` on ${args.focusArea}` : ""}`;
     default:
       return `Run ${tool}`;
   }
