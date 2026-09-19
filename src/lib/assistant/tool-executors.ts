@@ -288,6 +288,115 @@ async function searchKnowledgeBase(
   }));
 }
 
+interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+async function searchWebViaTavily(
+  query: string,
+  maxResults: number
+): Promise<WebSearchResult[] | null> {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      max_results: maxResults,
+      search_depth: "basic",
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Tavily search failed: ${res.status} ${res.statusText}`);
+  }
+
+  const data = await res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.results ?? []).map((r: any) => ({
+    title: r.title,
+    url: r.url,
+    snippet: r.content,
+  }));
+}
+
+async function searchWebViaSerper(
+  query: string,
+  maxResults: number
+): Promise<WebSearchResult[] | null> {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch("https://google.serper.dev/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-KEY": apiKey,
+    },
+    body: JSON.stringify({ q: query }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Serper search failed: ${res.status} ${res.statusText}`);
+  }
+
+  const data = await res.json();
+  const organic = (data.organic ?? []).slice(0, maxResults);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return organic.map((r: any) => ({
+    title: r.title,
+    url: r.link,
+    snippet: r.snippet ?? "",
+  }));
+}
+
+// Tries Tavily first (purpose-built for AI agent use, usually cleaner
+// results), falls back to Serper if Tavily's key is missing or the Tavily
+// call itself errors. If neither key is configured, fails clearly rather
+// than silently returning nothing.
+async function searchWeb(
+  args: { query: string; maxResults?: number },
+  _ctx: ExecutorContext
+) {
+  const maxResults = Math.min(args.maxResults ?? 5, 10);
+
+  let results: WebSearchResult[] | null = null;
+  let tavilyError: string | null = null;
+
+  try {
+    results = await searchWebViaTavily(args.query, maxResults);
+  } catch (err) {
+    tavilyError = err instanceof Error ? err.message : "Unknown Tavily error";
+  }
+
+  if (!results) {
+    try {
+      results = await searchWebViaSerper(args.query, maxResults);
+    } catch (err) {
+      const serperError =
+        err instanceof Error ? err.message : "Unknown Serper error";
+      throw new Error(
+        tavilyError
+          ? `Web search failed on both providers. Tavily: ${tavilyError}. Serper: ${serperError}`
+          : `Web search failed: ${serperError}`
+      );
+    }
+  }
+
+  if (!results) {
+    throw new Error(
+      "Web search isn't configured yet — neither TAVILY_API_KEY nor SERPER_API_KEY is set."
+    );
+  }
+
+  return { query: args.query, results };
+}
+
 async function listDocuments(
   args: { category?: string; status?: string },
   ctx: ExecutorContext
@@ -1109,6 +1218,7 @@ type ExecutorFn = (args: any, ctx: ExecutorContext) => Promise<unknown>;
 
 export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   search_knowledge_base: searchKnowledgeBase,
+  search_web: searchWeb,
   generate_image: generateImage,
   edit_image: editImage,
   list_documents: listDocuments,
