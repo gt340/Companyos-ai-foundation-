@@ -23,6 +23,7 @@ interface ExecutorContext {
   userId: string;
   role: RoleKey;
   agentId: string; // this organization's CEO Agent record
+  salesAgentId: string; // this organization's Sales Agent record (Phase 7)
   // Populated by the chat route (only for the current turn) when the
   // user's latest message includes an attached image — used by
   // edit_image. Not present when called from the execute-action route.
@@ -162,6 +163,142 @@ async function ensureCeoAgent(organizationId: string) {
     where: { organizationId_type: { organizationId, type: "CEO" } },
     update: {},
     create: { organizationId, type: "CEO", name: "CEO Agent" },
+  });
+}
+
+// ── Sales Agent foundation (Phase 7) ────────────────────────────────────
+
+const SALES_PROMPT_TEMPLATES: {
+  purpose: string;
+  name: string;
+  description: string;
+  content: string;
+}[] = [
+  {
+    purpose: "sales_system",
+    name: "Sales Agent System Prompt",
+    description: "Core identity and ground rules for the Sales Agent.",
+    content:
+      "You are the Sales Agent — an AI employee of this company responsible for helping generate and manage revenue, operating inside CompanyOS AI. You manage leads, contacts, deals, and the sales pipeline using only real CRM data actually provided to you — never invent a lead's details, a deal's value, or a customer's history. When information about a lead or deal is missing, say so plainly rather than guessing. You may draft outreach, follow-ups, quotations, and proposals, but sensitive external actions (sending anything to a real customer, changing a deal's value or stage in ways that affect reporting) require human approval before they take effect — you propose, a person approves. Think and communicate like a sharp, honest sales operations lead: direct, grounded in real pipeline data, and clear about what you don't know.",
+  },
+  {
+    purpose: "lead_qualification",
+    name: "Lead Qualification Prompt",
+    description: "Grounded lead scoring and qualification.",
+    content:
+      "Assess the provided lead using only its actual recorded details (source, contact info, any notes, any linked company) and any relevant company/product context provided. Give a qualification judgment (qualified / not yet qualified / unqualified) and a 0-100 score, with your reasoning tied explicitly to what's actually known about the lead. If key qualifying information (budget, timeline, authority, need) isn't recorded, say so as a gap rather than assuming an answer.",
+  },
+  {
+    purpose: "next_action",
+    name: "Next Action Recommendation Prompt",
+    description: "Grounded recommendation of the next sales action.",
+    content:
+      "Given the current state of a lead or deal (status, stage, history, notes, any communication log entries provided), recommend the single most useful next action a salesperson should take, with a one-sentence reason grounded in what's actually recorded. Do not recommend an action that assumes facts not provided.",
+  },
+  {
+    purpose: "outreach_drafting",
+    name: "Outreach Drafting Prompt",
+    description: "Grounded personalized outreach message drafting.",
+    content:
+      "Draft a personalized outreach message to the given lead or contact, using only their actual recorded details and the company's real profile/product information provided as context. Keep it concise and genuine — do not invent shared history, mutual connections, or claims about the recipient's company that weren't provided.",
+  },
+  {
+    purpose: "followup_drafting",
+    name: "Follow-up Drafting Prompt",
+    description: "Grounded follow-up message drafting.",
+    content:
+      "Draft a follow-up message continuing the real conversation history provided for this lead, contact, or deal. Reference only what was actually discussed or recorded — do not invent prior commitments, promises, or details not present in the provided history.",
+  },
+  {
+    purpose: "quotation_generation",
+    name: "Quotation Generation Prompt",
+    description: "Grounded quotation drafting.",
+    content:
+      "Draft a quotation for the given deal using only its actual recorded value, line items, or product/service context provided. If pricing details are incomplete, clearly mark the gap rather than inventing numbers — never fabricate a price, discount, or line item.",
+  },
+  {
+    purpose: "proposal_generation",
+    name: "Proposal Generation Prompt",
+    description: "Grounded proposal drafting.",
+    content:
+      "Draft a sales proposal for the given deal, grounded in the company's real product/service information, the lead or account's actual recorded needs, and any notes provided. State plainly where a stronger proposal would need more information than is currently available, rather than inventing customer requirements.",
+  },
+  {
+    purpose: "conversation_summary",
+    name: "Conversation Summary Prompt",
+    description: "Grounded summarization of customer communication.",
+    content:
+      "Summarize the provided customer communication history factually and concisely — key points raised, any commitments made by either side, and any open questions. Do not add interpretation presented as fact; if the customer's intent is ambiguous from the text, say so.",
+  },
+  {
+    purpose: "conversion_prediction",
+    name: "Conversion Prediction Prompt",
+    description: "Grounded likelihood-of-conversion assessment.",
+    content:
+      "Estimate the likelihood this deal converts (won), using only its actual stage, age, recorded value, and any communication/notes history provided. Give a confidence level and ground the reasoning explicitly in what's recorded — flag clearly if there isn't enough real signal to make a meaningful prediction, rather than producing a number without basis.",
+  },
+  {
+    purpose: "lost_deal_analysis",
+    name: "Lost Deal Analysis Prompt",
+    description: "Grounded analysis of lost deals.",
+    content:
+      "Analyze the provided lost deal(s) using only their actual recorded lost reasons, stage history, and notes. Identify real patterns only if the data actually supports them (e.g. multiple deals citing the same recorded lost reason) — do not speculate about causes that weren't recorded.",
+  },
+  {
+    purpose: "reactivation_recommendation",
+    name: "Customer Reactivation Prompt",
+    description: "Grounded identification of inactive leads/customers worth re-engaging.",
+    content:
+      "Given the provided list of leads or deals with their last-activity information, identify which are genuinely inactive (based on actual recorded dates, not assumption) and worth re-engaging, with a brief reason grounded in their real recorded history — prior interest, deal value, or past communication.",
+  },
+];
+
+async function ensureSalesPromptTemplatesSeeded() {
+  const count = await prisma.promptTemplate.count({ where: { agentType: "SALES" } });
+  if (count >= SALES_PROMPT_TEMPLATES.length) return;
+
+  for (const t of SALES_PROMPT_TEMPLATES) {
+    await prisma.promptTemplate.upsert({
+      where: {
+        purpose_agentType_version: { purpose: t.purpose, agentType: "SALES", version: 1 },
+      },
+      update: {},
+      create: {
+        name: t.name,
+        purpose: t.purpose,
+        agentType: "SALES",
+        description: t.description,
+        content: t.content,
+        version: 1,
+        isActive: true,
+      },
+    });
+  }
+}
+
+async function ensureSalesAgent(organizationId: string) {
+  return prisma.agent.upsert({
+    where: { organizationId_type: { organizationId, type: "SALES" } },
+    update: {},
+    create: { organizationId, type: "SALES", name: "Sales Agent" },
+  });
+}
+
+const DEFAULT_PIPELINE_STAGES: { name: string; order: number; isWon: boolean; isLost: boolean }[] = [
+  { name: "Prospecting", order: 0, isWon: false, isLost: false },
+  { name: "Qualification", order: 1, isWon: false, isLost: false },
+  { name: "Proposal", order: 2, isWon: false, isLost: false },
+  { name: "Negotiation", order: 3, isWon: false, isLost: false },
+  { name: "Won", order: 4, isWon: true, isLost: false },
+  { name: "Lost", order: 5, isWon: false, isLost: true },
+];
+
+async function ensureDefaultPipelineStages(organizationId: string) {
+  const count = await prisma.pipelineStage.count({ where: { organizationId } });
+  if (count > 0) return;
+
+  await prisma.pipelineStage.createMany({
+    data: DEFAULT_PIPELINE_STAGES.map((s) => ({ organizationId, ...s })),
   });
 }
 
@@ -1280,10 +1417,15 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   await ensurePromptTemplatesSeeded();
   const agent = await ensureCeoAgent(organizationId);
 
+  await ensureSalesPromptTemplatesSeeded();
+  const salesAgent = await ensureSalesAgent(organizationId);
+  await ensureDefaultPipelineStages(organizationId);
+
   return {
     organizationId,
     userId: user.id,
     role: membership.role.key,
     agentId: agent.id,
+    salesAgentId: salesAgent.id,
   };
 }
