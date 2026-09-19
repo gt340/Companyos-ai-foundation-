@@ -50,6 +50,8 @@ const TOOL_MIN_ROLES: Record<string, RoleKey[]> = {
   update_document_content: ["OWNER", "ADMIN"],
   delete_knowledge_document: ["OWNER", "ADMIN"],
   generate_executive_report: ["OWNER", "ADMIN"],
+  generate_strategic_plan: ["OWNER", "ADMIN"],
+  generate_risk_analysis: ["OWNER", "ADMIN"],
   remember_ceo_insight: ["OWNER", "ADMIN"],
 };
 
@@ -107,14 +109,14 @@ const CEO_PROMPT_TEMPLATES: {
     name: "Strategic Planning Prompt",
     description: "Grounded strategic planning assistance.",
     content:
-      "Help the founder think through strategic plans using the company's actual goals, mission, and known context. Ask clarifying questions where the request is ambiguous. Ground every suggestion in the company's real stated goals and constraints, and flag clearly if a plan would require information that isn't currently available.",
+      "Produce a structured strategic plan using only the company's actual stated goals, mission, vision, and known context. Cover, where there's real material to base it on: current strategic position, progress against stated goals, opportunities aligned with the company's actual mission and market, recommended strategic priorities, and what information gap would need to be filled to plan further (e.g. missing KPI data, missing market research). Ground every suggestion in the company's real stated goals and constraints, never invented ones. Label content as FACT, ANALYSIS, INSIGHT, RECOMMENDATION, or DATA GAP, same as an executive report.",
   },
   {
     purpose: "risk_analysis",
     name: "Risk Analysis Prompt",
     description: "Grounded business risk identification.",
     content:
-      "Identify potential business risks based only on what is actually known about the company: its industry, stage, team size, stated goals, and anything documented in its knowledge base or memory. Do not invent hypothetical financial or legal risks that aren't grounded in the company's real, known context. Clearly distinguish a risk you identified from the company's actual data versus a general industry consideration you're raising for awareness.",
+      "Identify potential business risks based only on what is actually known about the company: its industry, stage, team size, stated goals, and anything documented in its knowledge base or memory. Do not invent hypothetical financial or legal risks that aren't grounded in the company's real, known context — where you raise a general industry consideration rather than something drawn from the company's actual data, label it clearly as such rather than presenting it as a company-specific finding. Label content as FACT, ANALYSIS, INSIGHT, RECOMMENDATION, or DATA GAP, same as an executive report.",
   },
   {
     purpose: "kpi_analysis",
@@ -875,6 +877,13 @@ async function rememberCeoInsight(
   return { id: memory.id, type: memory.type };
 }
 
+// ── SHARED GROUNDED-REPORT ENGINE ───────────────────────────────────────
+// Powers generate_executive_report, generate_strategic_plan, and
+// generate_risk_analysis. Only the prompt template used and the default
+// title differ between them — the grounding (company profile + KB search
+// + CEO memory), JSON-shape enforcement, and atomic save/fail logic are
+// identical and shared here so the three tools can never drift apart.
+
 interface GeneratedReportSection {
   title: string;
   sectionType: string;
@@ -883,8 +892,16 @@ interface GeneratedReportSection {
   sourceRefs?: string[];
 }
 
-async function generateExecutiveReport(
-  args: { title?: string; reportingPeriod?: string },
+interface GroundedReportArgs {
+  title?: string;
+  reportingPeriod?: string;
+  focusArea?: string;
+}
+
+async function runGroundedReport(
+  templatePurpose: string,
+  defaultTitle: string,
+  args: GroundedReportArgs,
   ctx: ExecutorContext
 ) {
   const [company, organization, memories, systemTemplate, reportTemplate] =
@@ -900,21 +917,23 @@ async function generateExecutiveReport(
         where: { purpose: "ceo_system", agentType: "CEO", isActive: true },
       }),
       prisma.promptTemplate.findFirst({
-        where: { purpose: "executive_report", agentType: "CEO", isActive: true },
+        where: { purpose: templatePurpose, agentType: "CEO", isActive: true },
       }),
     ]);
 
   if (!reportTemplate) {
-    throw new Error("The executive report prompt template isn't set up yet.");
+    throw new Error(`The "${templatePurpose}" prompt template isn't set up yet.`);
   }
 
   // Best-effort knowledge base excerpts — don't fail the whole report if
-  // the knowledge base search itself errors.
+  // the knowledge base search itself errors. Use the focus area as the
+  // search query when given, so a scoped request pulls more relevant
+  // context than the generic query would.
   let knowledgeExcerpts: string[] = [];
   try {
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-3-small",
-      input: "company overview goals performance strategy",
+      input: args.focusArea || "company overview goals performance strategy",
     });
     const supabase = await createClient();
     const { data: results } = await supabase.rpc("match_knowledge_chunks", {
@@ -961,7 +980,7 @@ async function generateExecutiveReport(
       organizationId: ctx.organizationId,
       agentId: ctx.agentId,
       generatedBy: ctx.userId,
-      title: args.title || `Executive Report — ${new Date().toLocaleDateString()}`,
+      title: args.title || defaultTitle,
       reportingPeriod: args.reportingPeriod,
       status: "GENERATING",
     },
@@ -979,7 +998,7 @@ async function generateExecutiveReport(
         {
           role: "user",
           content: `${reportTemplate.content}
-
+${args.focusArea ? `\nFOCUS AREA REQUESTED BY THE FOUNDER: ${args.focusArea}\nPrioritize this focus area throughout, while still noting any broader information gaps relevant to it.\n` : ""}
 COMPANY CONTEXT:
 ${companyContext}
 
@@ -993,7 +1012,7 @@ Return ONLY a JSON object shaped exactly like this:
 {
   "summary": "2-4 sentence executive summary",
   "sections": [
-    { "title": "string", "sectionType": "SUMMARY|STATUS|GOALS|KPI|SALES|CUSTOMER|MARKETING|FINANCIAL|OPERATIONAL|RISK|OPPORTUNITY|DECISION|ACTION|DATA_GAP", "content": "string, include FACT/ANALYSIS/INSIGHT/RECOMMENDATION/DATA GAP labels inline where relevant", "priority": 1-5, "sourceRefs": ["string", ...] }
+    { "title": "string", "sectionType": "SUMMARY|STATUS|GOALS|STRATEGY|KPI|SALES|CUSTOMER|MARKETING|FINANCIAL|OPERATIONAL|RISK|OPPORTUNITY|DECISION|ACTION|DATA_GAP", "content": "string, include FACT/ANALYSIS/INSIGHT/RECOMMENDATION/DATA GAP labels inline where relevant", "priority": 1-5, "sourceRefs": ["string", ...] }
   ]
 }
 Omit sections with genuinely nothing to say rather than padding with empty content.`,
@@ -1047,6 +1066,42 @@ Omit sections with genuinely nothing to say rather than padding with empty conte
   }
 }
 
+async function generateExecutiveReport(
+  args: GroundedReportArgs,
+  ctx: ExecutorContext
+) {
+  return runGroundedReport(
+    "executive_report",
+    `Executive Report — ${new Date().toLocaleDateString()}`,
+    args,
+    ctx
+  );
+}
+
+async function generateStrategicPlan(
+  args: GroundedReportArgs,
+  ctx: ExecutorContext
+) {
+  return runGroundedReport(
+    "strategic_planning",
+    `Strategic Plan — ${new Date().toLocaleDateString()}`,
+    args,
+    ctx
+  );
+}
+
+async function generateRiskAnalysis(
+  args: GroundedReportArgs,
+  ctx: ExecutorContext
+) {
+  return runGroundedReport(
+    "risk_analysis",
+    `Risk Analysis — ${new Date().toLocaleDateString()}`,
+    args,
+    ctx
+  );
+}
+
 // ── DISPATCH TABLE ──────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1077,6 +1132,8 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   delete_knowledge_document: deleteKnowledgeDocument,
   remember_ceo_insight: rememberCeoInsight,
   generate_executive_report: generateExecutiveReport,
+  generate_strategic_plan: generateStrategicPlan,
+  generate_risk_analysis: generateRiskAnalysis,
 };
 
 export async function executeTool(
