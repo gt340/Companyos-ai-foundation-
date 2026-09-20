@@ -1487,7 +1487,7 @@ async function convertLeadToDeal(
 
     await prisma.lead.update({
       where: { id: lead.id },
-      data: { status: "CONVERTED", convertedDealId: deal.id },
+      data: { status: "CONVERTED" },
     });
 
     return deal;
