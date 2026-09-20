@@ -820,6 +820,18 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["channel", "content"],
     },
   },
+  {
+    name: "delete_lead",
+    description: "Permanently delete a lead. Use for duplicates or leads created by mistake. This cannot be undone.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+      },
+      required: ["leadId"],
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
