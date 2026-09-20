@@ -495,6 +495,331 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       },
     },
   },
+
+  // ── SALES AGENT / CRM — READ-ONLY TOOLS (auto-execute inline) ──────
+
+  {
+    name: "get_sales_pipeline_summary",
+    description:
+      "Get an aggregate summary of the sales pipeline: lead counts by status, deal counts and total value by stage, won/lost counts, and conversion rate. Use this for any question about overall sales performance, pipeline health, or dashboard-style numbers.",
+    mutating: false,
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "get_pipeline_stages",
+    description: "List this organization's sales pipeline stages in order.",
+    mutating: false,
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "list_crm_companies",
+    description: "List customer/prospect companies (CRM accounts) for this organization.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "list_contacts",
+    description: "List contacts, optionally filtered by which CRM company or lead they belong to.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        crmCompanyId: { type: "string", description: "Optional: only contacts at this company." },
+        leadId: { type: "string", description: "Optional: only contacts tied to this lead." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "list_leads",
+    description: "List leads, optionally filtered by status.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          description: "Optional filter: NEW, CONTACTED, QUALIFIED, UNQUALIFIED, CONVERTED, or LOST.",
+        },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "get_lead",
+    description: "Get full details of a specific lead, including its contacts, deals, tasks, follow-ups, and communication history.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string", description: "ID of the lead." },
+      },
+      required: ["leadId"],
+    },
+  },
+  {
+    name: "list_deals",
+    description: "List deals, optionally filtered by pipeline stage name or status.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        stageName: { type: "string", description: "Optional: filter by stage name, e.g. 'Negotiation'." },
+        status: { type: "string", description: "Optional filter: OPEN, WON, or LOST." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "get_deal",
+    description: "Get full details of a specific deal, including its tasks, follow-ups, communication history, and sales documents (quotations/proposals).",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        dealId: { type: "string", description: "ID of the deal." },
+      },
+      required: ["dealId"],
+    },
+  },
+  {
+    name: "list_sales_tasks",
+    description: "List sales tasks, optionally filtered by status.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Optional filter: TODO, IN_PROGRESS, DONE, or CANCELLED." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "list_follow_ups",
+    description: "List follow-ups. By default shows only incomplete ones, ordered by due date — useful for 'follow-ups due' questions.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        includeCompleted: { type: "boolean", description: "Include completed follow-ups too. Defaults to false." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "list_communication_logs",
+    description: "List logged communications (emails, calls, meetings, notes, texts) for a specific lead, deal, or contact.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+        contactId: { type: "string" },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+
+  // ── SALES AGENT / CRM — MUTATING TOOLS (require confirmation) ──────
+
+  {
+    name: "create_crm_company",
+    description: "Add a new customer/prospect company (CRM account) to the sales system.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        industry: { type: "string" },
+        website: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "create_contact",
+    description: "Add a new contact person, optionally linked to a CRM company and/or a lead.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        email: { type: "string" },
+        phone: { type: "string" },
+        jobTitle: { type: "string" },
+        crmCompanyId: { type: "string" },
+        leadId: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "create_lead",
+    description: "Create a new sales lead.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Lead's name (person or company)." },
+        email: { type: "string" },
+        phone: { type: "string" },
+        jobTitle: { type: "string" },
+        source: { type: "string", description: "Where the lead came from, e.g. 'website', 'referral', 'cold outreach'." },
+        crmCompanyId: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "update_lead",
+    description: "Update a lead's status, score, assignment, or notes.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        status: { type: "string", description: "NEW, CONTACTED, QUALIFIED, UNQUALIFIED, CONVERTED, or LOST." },
+        score: { type: "number", description: "0-100 lead score." },
+        aiConfidenceScore: { type: "number", description: "0-100 AI confidence in this score/assessment." },
+        notes: { type: "string" },
+      },
+      required: ["leadId"],
+    },
+  },
+  {
+    name: "convert_lead_to_deal",
+    description: "Convert a qualified lead into a new deal in the pipeline (starts at the first non-won/lost stage unless specified). Marks the lead CONVERTED and links it to the new deal.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        dealTitle: { type: "string" },
+        value: { type: "number", description: "Estimated deal value." },
+        currency: { type: "string", description: "Defaults to 'USD'." },
+        expectedCloseDate: { type: "string", description: "ISO date." },
+      },
+      required: ["leadId", "dealTitle"],
+    },
+  },
+  {
+    name: "create_deal",
+    description: "Create a new deal directly (not from a lead conversion).",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        value: { type: "number" },
+        currency: { type: "string", description: "Defaults to 'USD'." },
+        crmCompanyId: { type: "string" },
+        contactId: { type: "string" },
+        stageName: { type: "string", description: "Stage to start in. Defaults to the first pipeline stage." },
+        expectedCloseDate: { type: "string", description: "ISO date." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "update_deal",
+    description: "Update a deal's stage, value, status, close date, or lost reason. Moving to a stage marked 'won' or 'lost' also sets status and actualCloseDate accordingly.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        dealId: { type: "string" },
+        stageName: { type: "string" },
+        value: { type: "number" },
+        expectedCloseDate: { type: "string", description: "ISO date." },
+        lostReason: { type: "string", description: "Required when moving a deal to a 'lost' stage." },
+        aiConfidenceScore: { type: "number", description: "0-100 AI confidence in this deal closing." },
+      },
+      required: ["dealId"],
+    },
+  },
+  {
+    name: "create_sales_task",
+    description: "Create a sales task, optionally linked to a deal or lead.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        dueDate: { type: "string", description: "ISO date." },
+        dealId: { type: "string" },
+        leadId: { type: "string" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "update_sales_task_status",
+    description: "Update a sales task's status.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        status: { type: "string", description: "TODO, IN_PROGRESS, DONE, or CANCELLED." },
+      },
+      required: ["taskId", "status"],
+    },
+  },
+  {
+    name: "create_follow_up",
+    description: "Schedule a follow-up for a lead, deal, or contact.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        dueDate: { type: "string", description: "ISO date." },
+        notes: { type: "string" },
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+        contactId: { type: "string" },
+      },
+      required: ["dueDate"],
+    },
+  },
+  {
+    name: "complete_follow_up",
+    description: "Mark a follow-up as completed.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        followUpId: { type: "string" },
+      },
+      required: ["followUpId"],
+    },
+  },
+  {
+    name: "log_communication",
+    description: "Log a past communication (email, call, meeting, note, or text) with a lead, deal, or contact. Use this to record customer history — including saving a note.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        channel: { type: "string", description: "EMAIL, CALL, MEETING, NOTE, or SMS." },
+        content: { type: "string", description: "Summary or content of the communication." },
+        direction: { type: "string", description: "Optional: INBOUND or OUTBOUND." },
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+        contactId: { type: "string" },
+      },
+      required: ["channel", "content"],
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
