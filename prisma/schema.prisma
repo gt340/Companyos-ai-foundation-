@@ -569,6 +569,9 @@ model CrmCompany {
   name     String
   industry String?
   website  String?
+  email    String?
+  phone    String?
+  size     String?
   notes    String? @db.Text
 
   createdAt DateTime @default(now())
