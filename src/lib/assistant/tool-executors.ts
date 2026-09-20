@@ -1663,6 +1663,17 @@ async function logCommunication(
   );
 }
 
+async function deleteLead(args: { leadId: string }, ctx: ExecutorContext) {
+  return withSalesApproval(ctx, "delete_lead", args, async () => {
+    const existing = await prisma.lead.findFirst({
+      where: { id: args.leadId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Lead not found in this organization.");
+    await prisma.lead.delete({ where: { id: args.leadId } });
+    return { deleted: true, leadId: args.leadId, name: existing.name };
+  });
+}
+
 async function rememberCeoInsight(
   args: { type: string; content: string; importance?: number },
   ctx: ExecutorContext
@@ -1969,6 +1980,7 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   create_follow_up: createFollowUp,
   complete_follow_up: completeFollowUp,
   log_communication: logCommunication,
+  delete_lead: deleteLead,
 };
 
 export async function executeTool(
