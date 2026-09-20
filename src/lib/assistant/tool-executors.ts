@@ -1708,6 +1708,388 @@ async function deleteLead(args: { leadId: string }, ctx: ExecutorContext) {
   });
 }
 
+// ── SALES AGENT: AI capability tools ────────────────────────────────────
+// Shared helper: every capability below follows the same shape — load the
+// sales_system + one purpose-specific PromptTemplate, hand the model only
+// real data pulled from the CRM, and return its response as plain text
+// (not JSON mode — these are advisory/drafting outputs, not structured
+// reports). Grounding discipline (never invent, flag gaps) lives in the
+// template content itself, seeded back in ensureSalesPromptTemplatesSeeded.
+async function runSalesAiPrompt(
+  templatePurpose: string,
+  contextText: string,
+  extraInstruction?: string
+): Promise<string> {
+  const [systemTemplate, promptTemplate] = await Promise.all([
+    prisma.promptTemplate.findFirst({
+      where: { purpose: "sales_system", agentType: "SALES", isActive: true },
+    }),
+    prisma.promptTemplate.findFirst({
+      where: { purpose: templatePurpose, agentType: "SALES", isActive: true },
+    }),
+  ]);
+
+  if (!promptTemplate) {
+    throw new Error(`The "${templatePurpose}" prompt template isn't set up yet.`);
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: systemTemplate?.content ?? "You are the Sales Agent." },
+      {
+        role: "user",
+        content: `${promptTemplate.content}\n\n${
+          extraInstruction ? `ADDITIONAL INSTRUCTION FROM THE USER: ${extraInstruction}\n\n` : ""
+        }REAL RECORDED DATA (do not go beyond this):\n${contextText}`,
+      },
+    ],
+  });
+
+  const text = completion.choices[0]?.message?.content;
+  if (!text) throw new Error("The model returned no content.");
+  return text;
+}
+
+function formatLeadContext(lead: {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  jobTitle: string | null;
+  source: string | null;
+  status: string;
+  score: number;
+  notes: string | null;
+}): string {
+  return [
+    `Lead name: ${lead.name}`,
+    `Email: ${lead.email ?? "Not recorded"}`,
+    `Phone: ${lead.phone ?? "Not recorded"}`,
+    `Job title: ${lead.jobTitle ?? "Not recorded"}`,
+    `Source: ${lead.source ?? "Not recorded"}`,
+    `Status: ${lead.status}`,
+    `Current score: ${lead.score}`,
+    `Notes: ${lead.notes ?? "None"}`,
+  ].join("\n");
+}
+
+async function qualifyLead(args: { leadId: string }, ctx: ExecutorContext) {
+  const lead = await prisma.lead.findFirst({
+    where: { id: args.leadId, organizationId: ctx.organizationId },
+    include: { crmCompany: true },
+  });
+  if (!lead) throw new Error("Lead not found in this organization.");
+
+  const contextText = [
+    formatLeadContext(lead),
+    lead.crmCompany
+      ? `Company: ${lead.crmCompany.name} (${lead.crmCompany.industry ?? "industry not recorded"})`
+      : "No linked CRM company.",
+  ].join("\n");
+
+  const analysis = await runSalesAiPrompt("lead_qualification", contextText);
+  await logSalesAction(ctx, "qualify_lead", args, { analysis }, null, "analysis generated");
+  return { leadId: lead.id, leadName: lead.name, analysis };
+}
+
+async function recommendNextAction(
+  args: { leadId?: string; dealId?: string },
+  ctx: ExecutorContext
+) {
+  if (!args.leadId && !args.dealId) throw new Error("Provide either a leadId or a dealId.");
+
+  let contextText: string;
+  if (args.leadId) {
+    const lead = await prisma.lead.findFirst({
+      where: { id: args.leadId, organizationId: ctx.organizationId },
+      include: {
+        salesTasks: true,
+        followUps: { where: { completed: false } },
+        communicationLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
+      },
+    });
+    if (!lead) throw new Error("Lead not found in this organization.");
+    contextText = [
+      formatLeadContext(lead),
+      `Open tasks: ${lead.salesTasks.filter((t) => t.status !== "DONE").length}`,
+      `Pending follow-ups: ${lead.followUps.length}`,
+      `Recent communications: ${lead.communicationLogs.map((c) => `[${c.channel}] ${c.content}`).join(" | ") || "None"}`,
+    ].join("\n");
+  } else {
+    const deal = await prisma.deal.findFirst({
+      where: { id: args.dealId, organizationId: ctx.organizationId },
+      include: {
+        pipelineStage: true,
+        followUps: { where: { completed: false } },
+        communicationLogs: { orderBy: { occurredAt: "desc" }, take: 5 },
+      },
+    });
+    if (!deal) throw new Error("Deal not found in this organization.");
+    contextText = [
+      `Deal: ${deal.title}`,
+      `Stage: ${deal.pipelineStage?.name ?? "Unknown"}`,
+      `Value: ${deal.value ?? "Not recorded"} ${deal.currency}`,
+      `Status: ${deal.status}`,
+      `Expected close: ${deal.expectedCloseDate?.toISOString() ?? "Not set"}`,
+      `Pending follow-ups: ${deal.followUps.length}`,
+      `Recent communications: ${deal.communicationLogs.map((c) => `[${c.channel}] ${c.content}`).join(" | ") || "None"}`,
+    ].join("\n");
+  }
+
+  const analysis = await runSalesAiPrompt("next_action", contextText);
+  await logSalesAction(ctx, "recommend_next_action", args, { analysis }, null, "recommendation generated");
+  return { analysis };
+}
+
+async function draftOutreachMessage(
+  args: { leadId?: string; contactId?: string; tone?: string },
+  ctx: ExecutorContext
+) {
+  if (!args.leadId && !args.contactId) throw new Error("Provide either a leadId or a contactId.");
+
+  let contextText: string;
+  if (args.leadId) {
+    const lead = await prisma.lead.findFirst({
+      where: { id: args.leadId, organizationId: ctx.organizationId },
+      include: { crmCompany: true },
+    });
+    if (!lead) throw new Error("Lead not found in this organization.");
+    contextText = formatLeadContext(lead);
+  } else {
+    const contact = await prisma.contact.findFirst({
+      where: { id: args.contactId, organizationId: ctx.organizationId },
+      include: { crmCompany: true },
+    });
+    if (!contact) throw new Error("Contact not found in this organization.");
+    contextText = [
+      `Contact name: ${contact.name}`,
+      `Email: ${contact.email ?? "Not recorded"}`,
+      `Job title: ${contact.jobTitle ?? "Not recorded"}`,
+      contact.crmCompany ? `Company: ${contact.crmCompany.name}` : "No linked company.",
+    ].join("\n");
+  }
+
+  const message = await runSalesAiPrompt("outreach_drafting", contextText, args.tone ? `Tone: ${args.tone}` : undefined);
+  await logSalesAction(ctx, "draft_outreach_message", args, { message }, null, "draft generated");
+  return { message };
+}
+
+async function draftFollowupMessage(
+  args: { leadId?: string; dealId?: string; contactId?: string },
+  ctx: ExecutorContext
+) {
+  const logs = await prisma.communicationLog.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.leadId ? { leadId: args.leadId } : {}),
+      ...(args.dealId ? { dealId: args.dealId } : {}),
+      ...(args.contactId ? { contactId: args.contactId } : {}),
+    },
+    orderBy: { occurredAt: "desc" },
+    take: 10,
+  });
+
+  const contextText = logs.length
+    ? logs.map((l) => `[${l.occurredAt.toISOString()}] [${l.channel}] ${l.content}`).join("\n")
+    : "No prior communication history recorded.";
+
+  const message = await runSalesAiPrompt("followup_drafting", contextText);
+  await logSalesAction(ctx, "draft_followup_message", args, { message }, null, "draft generated");
+  return { message };
+}
+
+async function generateQuotation(
+  args: { dealId: string; lineItemsNote?: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "generate_quotation", args, async () => {
+    const deal = await prisma.deal.findFirst({
+      where: { id: args.dealId, organizationId: ctx.organizationId },
+      include: { crmCompany: true, contact: true },
+    });
+    if (!deal) throw new Error("Deal not found in this organization.");
+
+    const contextText = [
+      `Deal: ${deal.title}`,
+      `Value: ${deal.value ?? "Not recorded"} ${deal.currency}`,
+      deal.crmCompany ? `Company: ${deal.crmCompany.name}` : "No linked company.",
+      deal.contact ? `Contact: ${deal.contact.name}` : "No linked contact.",
+    ].join("\n");
+
+    const content = await runSalesAiPrompt("quotation_generation", contextText, args.lineItemsNote);
+
+    return prisma.salesDocument.create({
+      data: {
+        organizationId: ctx.organizationId,
+        dealId: deal.id,
+        kind: "QUOTATION",
+        title: `Quotation — ${deal.title}`,
+        content,
+        totalValue: deal.value,
+        createdBy: ctx.userId,
+      },
+    });
+  });
+}
+
+async function generateProposal(
+  args: { dealId: string; focusNote?: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "generate_proposal", args, async () => {
+    const [deal, company] = await Promise.all([
+      prisma.deal.findFirst({
+        where: { id: args.dealId, organizationId: ctx.organizationId },
+        include: { crmCompany: true, contact: true },
+      }),
+      prisma.company.findUnique({ where: { organizationId: ctx.organizationId } }),
+    ]);
+    if (!deal) throw new Error("Deal not found in this organization.");
+
+    const contextText = [
+      `Deal: ${deal.title}`,
+      `Value: ${deal.value ?? "Not recorded"} ${deal.currency}`,
+      deal.crmCompany ? `Prospect company: ${deal.crmCompany.name}` : "No linked company.",
+      deal.contact ? `Contact: ${deal.contact.name}` : "No linked contact.",
+      company
+        ? `Our products: ${company.products.join("; ") || "Not set"}\nOur services: ${company.services.join("; ") || "Not set"}\nOur mission: ${company.mission ?? "Not set"}`
+        : "Our own company profile is not filled in yet.",
+    ].join("\n");
+
+    const content = await runSalesAiPrompt("proposal_generation", contextText, args.focusNote);
+
+    return prisma.salesDocument.create({
+      data: {
+        organizationId: ctx.organizationId,
+        dealId: deal.id,
+        kind: "PROPOSAL",
+        title: `Proposal — ${deal.title}`,
+        content,
+        totalValue: deal.value,
+        createdBy: ctx.userId,
+      },
+    });
+  });
+}
+
+async function summarizeConversation(
+  args: { leadId?: string; dealId?: string; contactId?: string },
+  ctx: ExecutorContext
+) {
+  const logs = await prisma.communicationLog.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.leadId ? { leadId: args.leadId } : {}),
+      ...(args.dealId ? { dealId: args.dealId } : {}),
+      ...(args.contactId ? { contactId: args.contactId } : {}),
+    },
+    orderBy: { occurredAt: "asc" },
+  });
+
+  if (logs.length === 0) {
+    return { summary: "No communication has been logged for this yet — nothing to summarize." };
+  }
+
+  const contextText = logs
+    .map((l) => `[${l.occurredAt.toISOString()}] [${l.channel}${l.direction ? `/${l.direction}` : ""}] ${l.content}`)
+    .join("\n");
+
+  const summary = await runSalesAiPrompt("conversation_summary", contextText);
+  await logSalesAction(ctx, "summarize_conversation", args, { summary }, null, "summary generated");
+  return { summary };
+}
+
+async function predictConversion(args: { dealId: string }, ctx: ExecutorContext) {
+  const deal = await prisma.deal.findFirst({
+    where: { id: args.dealId, organizationId: ctx.organizationId },
+    include: {
+      pipelineStage: true,
+      communicationLogs: { orderBy: { occurredAt: "desc" }, take: 10 },
+    },
+  });
+  if (!deal) throw new Error("Deal not found in this organization.");
+
+  const ageDays = Math.round((Date.now() - deal.createdAt.getTime()) / (1000 * 60 * 60 * 24));
+  const contextText = [
+    `Deal: ${deal.title}`,
+    `Stage: ${deal.pipelineStage?.name ?? "Unknown"}`,
+    `Value: ${deal.value ?? "Not recorded"} ${deal.currency}`,
+    `Age: ${ageDays} days since created`,
+    `Expected close: ${deal.expectedCloseDate?.toISOString() ?? "Not set"}`,
+    `Prior AI confidence recorded: ${deal.aiConfidenceScore ?? "None yet"}`,
+    `Communication count: ${deal.communicationLogs.length}`,
+    `Recent communications: ${deal.communicationLogs.map((c) => `[${c.channel}] ${c.content}`).join(" | ") || "None"}`,
+  ].join("\n");
+
+  const analysis = await runSalesAiPrompt("conversion_prediction", contextText);
+  await logSalesAction(ctx, "predict_conversion", args, { analysis }, null, "prediction generated");
+  return { dealId: deal.id, dealTitle: deal.title, analysis };
+}
+
+async function analyzeLostDeals(args: { limit?: number }, ctx: ExecutorContext) {
+  const lostDeals = await prisma.deal.findMany({
+    where: { organizationId: ctx.organizationId, status: "LOST" },
+    orderBy: { actualCloseDate: "desc" },
+    take: args.limit ?? 10,
+  });
+
+  if (lostDeals.length === 0) {
+    return { analysis: "No lost deals recorded yet — nothing to analyze." };
+  }
+
+  const contextText = lostDeals
+    .map(
+      (d) =>
+        `Deal: ${d.title} | Value: ${d.value ?? "Not recorded"} ${d.currency} | Lost reason: ${
+          d.lostReason ?? "Not recorded"
+        } | Closed: ${d.actualCloseDate?.toISOString() ?? "Unknown"}`
+    )
+    .join("\n");
+
+  const analysis = await runSalesAiPrompt("lost_deal_analysis", contextText);
+  await logSalesAction(ctx, "analyze_lost_deals", args, { analysis }, null, "analysis generated");
+  return { dealsAnalyzed: lostDeals.length, analysis };
+}
+
+async function findReactivationCandidates(
+  args: { inactiveDays?: number },
+  ctx: ExecutorContext
+) {
+  const cutoff = new Date(Date.now() - (args.inactiveDays ?? 30) * 24 * 60 * 60 * 1000);
+
+  const [staleLeads, staleDeals] = await Promise.all([
+    prisma.lead.findMany({
+      where: {
+        organizationId: ctx.organizationId,
+        status: { notIn: ["CONVERTED", "LOST", "UNQUALIFIED"] },
+        updatedAt: { lte: cutoff },
+      },
+      take: 20,
+    }),
+    prisma.deal.findMany({
+      where: { organizationId: ctx.organizationId, status: "OPEN", updatedAt: { lte: cutoff } },
+      take: 20,
+    }),
+  ]);
+
+  if (staleLeads.length === 0 && staleDeals.length === 0) {
+    return { analysis: `No leads or open deals have gone ${args.inactiveDays ?? 30}+ days without an update.` };
+  }
+
+  const contextText = [
+    staleLeads.length
+      ? `Inactive leads:\n${staleLeads.map((l) => `- ${l.name} (status ${l.status}, last updated ${l.updatedAt.toISOString()})`).join("\n")}`
+      : "No inactive leads.",
+    staleDeals.length
+      ? `Inactive open deals:\n${staleDeals.map((d) => `- ${d.title} (value ${d.value ?? "not recorded"}, last updated ${d.updatedAt.toISOString()})`).join("\n")}`
+      : "No inactive open deals.",
+  ].join("\n\n");
+
+  const analysis = await runSalesAiPrompt("reactivation_recommendation", contextText);
+  await logSalesAction(ctx, "find_reactivation_candidates", args, { analysis }, null, "candidates identified");
+  return { leadCount: staleLeads.length, dealCount: staleDeals.length, analysis };
+}
+
 async function rememberCeoInsight(
   args: { type: string; content: string; importance?: number },
   ctx: ExecutorContext
@@ -2016,6 +2398,16 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   complete_follow_up: completeFollowUp,
   log_communication: logCommunication,
   delete_lead: deleteLead,
+  qualify_lead: qualifyLead,
+  recommend_next_action: recommendNextAction,
+  draft_outreach_message: draftOutreachMessage,
+  draft_followup_message: draftFollowupMessage,
+  generate_quotation: generateQuotation,
+  generate_proposal: generateProposal,
+  summarize_conversation: summarizeConversation,
+  predict_conversion: predictConversion,
+  analyze_lost_deals: analyzeLostDeals,
+  find_reactivation_candidates: findReactivationCandidates,
 };
 
 export async function executeTool(
