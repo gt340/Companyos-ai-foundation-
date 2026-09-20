@@ -853,6 +853,128 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["leadId"],
     },
   },
+
+  // ── SALES AGENT — AI CAPABILITIES ───────────────────────────────────
+
+  {
+    name: "qualify_lead",
+    description: "Analyze and qualify a lead using only its actual recorded details. Returns an assessment and a suggested score — does NOT save anything. Use update_lead afterward if the user wants the suggested score/status actually applied.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { leadId: { type: "string" } },
+      required: ["leadId"],
+    },
+  },
+  {
+    name: "recommend_next_action",
+    description: "Recommend the single best next action for a lead or deal, grounded in its actual recorded state and history.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "draft_outreach_message",
+    description: "Draft a personalized outreach message to a lead or contact, grounded in their actual recorded details. Does not send anything — drafts only.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        contactId: { type: "string" },
+        tone: { type: "string", description: "Optional tone/style guidance, e.g. 'formal', 'casual', 'brief'." },
+      },
+    },
+  },
+  {
+    name: "draft_followup_message",
+    description: "Draft a follow-up message continuing the real recorded conversation history for a lead, deal, or contact. Does not send anything — drafts only.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+        contactId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "generate_quotation",
+    description: "Generate a quotation document for a deal, grounded in its actual recorded value and details. Saves it permanently to the deal.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        dealId: { type: "string" },
+        lineItemsNote: { type: "string", description: "Optional: specific line items or pricing structure to include." },
+      },
+      required: ["dealId"],
+    },
+  },
+  {
+    name: "generate_proposal",
+    description: "Generate a sales proposal document for a deal, grounded in the company's real product/service info and the deal's recorded details. Saves it permanently to the deal.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        dealId: { type: "string" },
+        focusNote: { type: "string", description: "Optional: specific angle or customer need to emphasize." },
+      },
+      required: ["dealId"],
+    },
+  },
+  {
+    name: "summarize_conversation",
+    description: "Summarize the actual logged communication history for a lead, deal, or contact.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        leadId: { type: "string" },
+        dealId: { type: "string" },
+        contactId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "predict_conversion",
+    description: "Estimate a deal's likelihood of closing (won), grounded only in its actual stage, age, value, and recorded history.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { dealId: { type: "string" } },
+      required: ["dealId"],
+    },
+  },
+  {
+    name: "analyze_lost_deals",
+    description: "Analyze recently lost deals for real recorded patterns in why they were lost.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "How many recent lost deals to analyze. Defaults to 10." },
+      },
+    },
+  },
+  {
+    name: "find_reactivation_candidates",
+    description: "Identify leads or deals that have gone genuinely inactive (based on real recorded dates) and are worth re-engaging.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        inactiveDays: { type: "number", description: "Consider inactive after this many days with no update. Defaults to 30." },
+      },
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
