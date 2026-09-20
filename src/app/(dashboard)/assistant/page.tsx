@@ -72,6 +72,8 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       }${args.focusArea ? ` on ${args.focusArea}` : ""}`;
     case "create_crm_company":
       return `Add "${args.name}" as a CRM company`;
+    case "update_crm_company":
+      return "Update CRM company details";
     case "create_contact":
       return `Add contact "${args.name}"`;
     case "create_lead":
