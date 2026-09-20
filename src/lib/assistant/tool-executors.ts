@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl, cleanText } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
-import type { RoleKey, MemoryType } from "@prisma/client";
+import type { RoleKey, MemoryType, LeadStatus, DealStatus, SalesTaskStatus, CommunicationChannel } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -1100,6 +1100,569 @@ async function deleteKnowledgeDocument(
   return { deleted: true, documentId: args.documentId };
 }
 
+// ── SALES AGENT / CRM: approval + audit logging ─────────────────────────
+// Every mutating Sales tool runs through this. Since the app's Confirm
+// card IS the approval step (no separate multi-person approval queue
+// exists yet), the ApprovalRequest row is created already APPROVED at the
+// moment of confirmation, then flipped to EXECUTED/FAILED with the real
+// result — giving genuine queryable history rather than just the
+// transient in-memory Confirm-card state.
+async function withSalesApproval<T>(
+  ctx: ExecutorContext,
+  actionType: string,
+  proposedAction: unknown,
+  run: () => Promise<T>
+): Promise<T> {
+  const approval = await prisma.approvalRequest.create({
+    data: {
+      organizationId: ctx.organizationId,
+      agentId: ctx.salesAgentId,
+      actionType,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      proposedAction: proposedAction as any,
+      status: "APPROVED",
+      requestedBy: ctx.userId,
+      reviewedBy: ctx.userId,
+    },
+  });
+
+  try {
+    const result = await run();
+    await prisma.approvalRequest.update({
+      where: { id: approval.id },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      data: { status: "EXECUTED", result: result as any },
+    });
+    await logSalesAction(ctx, actionType, proposedAction, result, "EXECUTED", "success");
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    await prisma.approvalRequest.update({
+      where: { id: approval.id },
+      data: { status: "FAILED", result: { error: message } },
+    });
+    await logSalesAction(ctx, actionType, proposedAction, null, "FAILED", message);
+    throw err;
+  }
+}
+
+// Every Sales Agent action — read or write — gets an AgentActionLog row,
+// per the audit requirement (agent, action, time, reason, input, output,
+// approval, result). Read-only lookups pass approvalStatus null (nothing
+// to approve) and a short result summary.
+async function logSalesAction(
+  ctx: ExecutorContext,
+  action: string,
+  input: unknown,
+  output: unknown,
+  approvalStatus: "EXECUTED" | "FAILED" | null,
+  result: string
+) {
+  try {
+    await prisma.agentActionLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        agentId: ctx.salesAgentId,
+        action,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        input: (input ?? {}) as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        output: (output ?? null) as any,
+        approvalStatus: approvalStatus ?? undefined,
+        result,
+      },
+    });
+  } catch {
+    // Audit logging is best-effort — never let a logging failure break
+    // the actual tool call.
+  }
+}
+
+async function resolveStageId(
+  organizationId: string,
+  stageName?: string,
+  fallbackToFirst = true
+): Promise<string> {
+  if (stageName) {
+    const stage = await prisma.pipelineStage.findFirst({
+      where: { organizationId, name: { equals: stageName, mode: "insensitive" } },
+    });
+    if (!stage) throw new Error(`No pipeline stage named "${stageName}" exists.`);
+    return stage.id;
+  }
+  if (!fallbackToFirst) throw new Error("A stage name is required.");
+  const first = await prisma.pipelineStage.findFirst({
+    where: { organizationId },
+    orderBy: { order: "asc" },
+  });
+  if (!first) throw new Error("No pipeline stages are set up for this organization.");
+  return first.id;
+}
+
+// ── SALES AGENT / CRM: read-only executors ──────────────────────────────
+
+async function getSalesPipelineSummary(_args: unknown, ctx: ExecutorContext) {
+  const [leadsByStatus, deals, wonCount, lostCount, followUpsDue] = await Promise.all([
+    prisma.lead.groupBy({
+      by: ["status"],
+      where: { organizationId: ctx.organizationId },
+      _count: true,
+    }),
+    prisma.deal.findMany({
+      where: { organizationId: ctx.organizationId },
+      select: { value: true, status: true, pipelineStageId: true },
+    }),
+    prisma.deal.count({ where: { organizationId: ctx.organizationId, status: "WON" } }),
+    prisma.deal.count({ where: { organizationId: ctx.organizationId, status: "LOST" } }),
+    prisma.followUp.count({
+      where: { organizationId: ctx.organizationId, completed: false, dueDate: { lte: new Date() } },
+    }),
+  ]);
+
+  const totalLeads = leadsByStatus.reduce((sum, g) => sum + g._count, 0);
+  const openDeals = deals.filter((d) => d.status === "OPEN");
+  const pipelineValue = openDeals.reduce((sum, d) => sum + Number(d.value ?? 0), 0);
+  const wonDeals = deals.filter((d) => d.status === "WON");
+  const revenueGenerated = wonDeals.reduce((sum, d) => sum + Number(d.value ?? 0), 0);
+  const closedCount = wonCount + lostCount;
+  const conversionRate = closedCount > 0 ? Math.round((wonCount / closedCount) * 100) : null;
+
+  const result = {
+    totalLeads,
+    newLeads: leadsByStatus.find((g) => g.status === "NEW")?._count ?? 0,
+    qualifiedLeads: leadsByStatus.find((g) => g.status === "QUALIFIED")?._count ?? 0,
+    activeDeals: openDeals.length,
+    wonDeals: wonCount,
+    lostDeals: lostCount,
+    conversionRatePercent: conversionRate,
+    pipelineValue,
+    revenueGenerated,
+    followUpsDue,
+    note: conversionRate === null ? "No closed deals yet — conversion rate not meaningful." : undefined,
+  };
+
+  await logSalesAction(ctx, "get_sales_pipeline_summary", {}, result, null, "summary generated");
+  return result;
+}
+
+async function getPipelineStages(_args: unknown, ctx: ExecutorContext) {
+  return prisma.pipelineStage.findMany({
+    where: { organizationId: ctx.organizationId },
+    orderBy: { order: "asc" },
+  });
+}
+
+async function listCrmCompanies(args: { limit?: number }, ctx: ExecutorContext) {
+  return prisma.crmCompany.findMany({
+    where: { organizationId: ctx.organizationId },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function listContacts(
+  args: { crmCompanyId?: string; leadId?: string; limit?: number },
+  ctx: ExecutorContext
+) {
+  return prisma.contact.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.crmCompanyId ? { crmCompanyId: args.crmCompanyId } : {}),
+      ...(args.leadId ? { leadId: args.leadId } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function listLeads(args: { status?: string; limit?: number }, ctx: ExecutorContext) {
+  return prisma.lead.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.status ? { status: args.status.toUpperCase() as LeadStatus } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function getLead(args: { leadId: string }, ctx: ExecutorContext) {
+  const lead = await prisma.lead.findFirst({
+    where: { id: args.leadId, organizationId: ctx.organizationId },
+    include: {
+      contacts: true,
+      deals: true,
+      salesTasks: true,
+      followUps: true,
+      communicationLogs: { orderBy: { occurredAt: "desc" }, take: 10 },
+      crmCompany: true,
+    },
+  });
+  if (!lead) throw new Error("Lead not found in this organization.");
+  return lead;
+}
+
+async function listDeals(
+  args: { stageName?: string; status?: string; limit?: number },
+  ctx: ExecutorContext
+) {
+  const stageId = args.stageName
+    ? await resolveStageId(ctx.organizationId, args.stageName, false)
+    : undefined;
+
+  return prisma.deal.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(stageId ? { pipelineStageId: stageId } : {}),
+      ...(args.status ? { status: args.status.toUpperCase() as DealStatus } : {}),
+    },
+    include: { pipelineStage: true },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function getDeal(args: { dealId: string }, ctx: ExecutorContext) {
+  const deal = await prisma.deal.findFirst({
+    where: { id: args.dealId, organizationId: ctx.organizationId },
+    include: {
+      pipelineStage: true,
+      salesTasks: true,
+      followUps: true,
+      communicationLogs: { orderBy: { occurredAt: "desc" }, take: 10 },
+      salesDocuments: true,
+      crmCompany: true,
+      contact: true,
+      lead: true,
+    },
+  });
+  if (!deal) throw new Error("Deal not found in this organization.");
+  return deal;
+}
+
+async function listSalesTasks(args: { status?: string; limit?: number }, ctx: ExecutorContext) {
+  return prisma.salesTask.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.status ? { status: args.status.toUpperCase() as SalesTaskStatus } : {}),
+    },
+    orderBy: { dueDate: "asc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function listFollowUps(
+  args: { includeCompleted?: boolean; limit?: number },
+  ctx: ExecutorContext
+) {
+  return prisma.followUp.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.includeCompleted ? {} : { completed: false }),
+    },
+    orderBy: { dueDate: "asc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function listCommunicationLogs(
+  args: { leadId?: string; dealId?: string; contactId?: string; limit?: number },
+  ctx: ExecutorContext
+) {
+  return prisma.communicationLog.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.leadId ? { leadId: args.leadId } : {}),
+      ...(args.dealId ? { dealId: args.dealId } : {}),
+      ...(args.contactId ? { contactId: args.contactId } : {}),
+    },
+    orderBy: { occurredAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+// ── SALES AGENT / CRM: mutating executors (approval + audit wrapped) ───
+
+async function createCrmCompany(
+  args: { name: string; industry?: string; website?: string; notes?: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_crm_company", args, () =>
+    prisma.crmCompany.create({ data: { organizationId: ctx.organizationId, ...args } })
+  );
+}
+
+async function createContact(
+  args: {
+    name: string;
+    email?: string;
+    phone?: string;
+    jobTitle?: string;
+    crmCompanyId?: string;
+    leadId?: string;
+    notes?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_contact", args, () =>
+    prisma.contact.create({ data: { organizationId: ctx.organizationId, ...args } })
+  );
+}
+
+async function createLead(
+  args: {
+    name: string;
+    email?: string;
+    phone?: string;
+    jobTitle?: string;
+    source?: string;
+    crmCompanyId?: string;
+    notes?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_lead", args, () =>
+    prisma.lead.create({ data: { organizationId: ctx.organizationId, ...args } })
+  );
+}
+
+async function updateLead(
+  args: {
+    leadId: string;
+    status?: string;
+    score?: number;
+    aiConfidenceScore?: number;
+    notes?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "update_lead", args, async () => {
+    const existing = await prisma.lead.findFirst({
+      where: { id: args.leadId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Lead not found in this organization.");
+
+    return prisma.lead.update({
+      where: { id: args.leadId },
+      data: {
+        ...(args.status ? { status: args.status.toUpperCase() as LeadStatus } : {}),
+        ...(args.score !== undefined ? { score: args.score } : {}),
+        ...(args.aiConfidenceScore !== undefined ? { aiConfidenceScore: args.aiConfidenceScore } : {}),
+        ...(args.notes !== undefined ? { notes: args.notes } : {}),
+      },
+    });
+  });
+}
+
+async function convertLeadToDeal(
+  args: {
+    leadId: string;
+    dealTitle: string;
+    value?: number;
+    currency?: string;
+    expectedCloseDate?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "convert_lead_to_deal", args, async () => {
+    const lead = await prisma.lead.findFirst({
+      where: { id: args.leadId, organizationId: ctx.organizationId },
+    });
+    if (!lead) throw new Error("Lead not found in this organization.");
+
+    const stageId = await resolveStageId(ctx.organizationId);
+
+    const deal = await prisma.deal.create({
+      data: {
+        organizationId: ctx.organizationId,
+        title: args.dealTitle,
+        leadId: lead.id,
+        crmCompanyId: lead.crmCompanyId,
+        pipelineStageId: stageId,
+        value: args.value,
+        currency: args.currency ?? "USD",
+        expectedCloseDate: args.expectedCloseDate ? new Date(args.expectedCloseDate) : undefined,
+      },
+    });
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { status: "CONVERTED", convertedDealId: deal.id },
+    });
+
+    return deal;
+  });
+}
+
+async function createDeal(
+  args: {
+    title: string;
+    value?: number;
+    currency?: string;
+    crmCompanyId?: string;
+    contactId?: string;
+    stageName?: string;
+    expectedCloseDate?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_deal", args, async () => {
+    const stageId = await resolveStageId(ctx.organizationId, args.stageName);
+    return prisma.deal.create({
+      data: {
+        organizationId: ctx.organizationId,
+        title: args.title,
+        value: args.value,
+        currency: args.currency ?? "USD",
+        crmCompanyId: args.crmCompanyId,
+        contactId: args.contactId,
+        pipelineStageId: stageId,
+        expectedCloseDate: args.expectedCloseDate ? new Date(args.expectedCloseDate) : undefined,
+      },
+    });
+  });
+}
+
+async function updateDeal(
+  args: {
+    dealId: string;
+    stageName?: string;
+    value?: number;
+    expectedCloseDate?: string;
+    lostReason?: string;
+    aiConfidenceScore?: number;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "update_deal", args, async () => {
+    const existing = await prisma.deal.findFirst({
+      where: { id: args.dealId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Deal not found in this organization.");
+
+    let stageUpdate: { pipelineStageId?: string; status?: DealStatus; actualCloseDate?: Date } = {};
+    if (args.stageName) {
+      const stage = await prisma.pipelineStage.findFirst({
+        where: { organizationId: ctx.organizationId, name: { equals: args.stageName, mode: "insensitive" } },
+      });
+      if (!stage) throw new Error(`No pipeline stage named "${args.stageName}" exists.`);
+      if (stage.isLost && !args.lostReason) {
+        throw new Error("Moving a deal to a lost stage requires a lostReason.");
+      }
+      stageUpdate = {
+        pipelineStageId: stage.id,
+        status: stage.isWon ? "WON" : stage.isLost ? "LOST" : "OPEN",
+        actualCloseDate: stage.isWon || stage.isLost ? new Date() : undefined,
+      };
+    }
+
+    return prisma.deal.update({
+      where: { id: args.dealId },
+      data: {
+        ...stageUpdate,
+        ...(args.value !== undefined ? { value: args.value } : {}),
+        ...(args.expectedCloseDate ? { expectedCloseDate: new Date(args.expectedCloseDate) } : {}),
+        ...(args.lostReason ? { lostReason: args.lostReason } : {}),
+        ...(args.aiConfidenceScore !== undefined ? { aiConfidenceScore: args.aiConfidenceScore } : {}),
+      },
+    });
+  });
+}
+
+async function createSalesTask(
+  args: { title: string; description?: string; dueDate?: string; dealId?: string; leadId?: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_sales_task", args, () =>
+    prisma.salesTask.create({
+      data: {
+        organizationId: ctx.organizationId,
+        title: args.title,
+        description: args.description,
+        dueDate: args.dueDate ? new Date(args.dueDate) : undefined,
+        dealId: args.dealId,
+        leadId: args.leadId,
+        createdBy: ctx.userId,
+      },
+    })
+  );
+}
+
+async function updateSalesTaskStatus(
+  args: { taskId: string; status: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "update_sales_task_status", args, async () => {
+    const existing = await prisma.salesTask.findFirst({
+      where: { id: args.taskId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Sales task not found in this organization.");
+    return prisma.salesTask.update({
+      where: { id: args.taskId },
+      data: { status: args.status.toUpperCase() as SalesTaskStatus },
+    });
+  });
+}
+
+async function createFollowUp(
+  args: { dueDate: string; notes?: string; leadId?: string; dealId?: string; contactId?: string },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "create_follow_up", args, () =>
+    prisma.followUp.create({
+      data: {
+        organizationId: ctx.organizationId,
+        dueDate: new Date(args.dueDate),
+        notes: args.notes,
+        leadId: args.leadId,
+        dealId: args.dealId,
+        contactId: args.contactId,
+        createdBy: ctx.userId,
+      },
+    })
+  );
+}
+
+async function completeFollowUp(args: { followUpId: string }, ctx: ExecutorContext) {
+  return withSalesApproval(ctx, "complete_follow_up", args, async () => {
+    const existing = await prisma.followUp.findFirst({
+      where: { id: args.followUpId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Follow-up not found in this organization.");
+    return prisma.followUp.update({
+      where: { id: args.followUpId },
+      data: { completed: true },
+    });
+  });
+}
+
+async function logCommunication(
+  args: {
+    channel: string;
+    content: string;
+    direction?: string;
+    leadId?: string;
+    dealId?: string;
+    contactId?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "log_communication", args, () =>
+    prisma.communicationLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        channel: args.channel.toUpperCase() as CommunicationChannel,
+        content: args.content,
+        direction: args.direction?.toUpperCase(),
+        leadId: args.leadId,
+        dealId: args.dealId,
+        contactId: args.contactId,
+        createdBy: ctx.userId,
+      },
+    })
+  );
+}
+
 async function rememberCeoInsight(
   args: { type: string; content: string; importance?: number },
   ctx: ExecutorContext
@@ -1381,6 +1944,31 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   generate_executive_report: generateExecutiveReport,
   generate_strategic_plan: generateStrategicPlan,
   generate_risk_analysis: generateRiskAnalysis,
+
+  // Sales Agent / CRM (Phase 7)
+  get_sales_pipeline_summary: getSalesPipelineSummary,
+  get_pipeline_stages: getPipelineStages,
+  list_crm_companies: listCrmCompanies,
+  list_contacts: listContacts,
+  list_leads: listLeads,
+  get_lead: getLead,
+  list_deals: listDeals,
+  get_deal: getDeal,
+  list_sales_tasks: listSalesTasks,
+  list_follow_ups: listFollowUps,
+  list_communication_logs: listCommunicationLogs,
+  create_crm_company: createCrmCompany,
+  create_contact: createContact,
+  create_lead: createLead,
+  update_lead: updateLead,
+  convert_lead_to_deal: convertLeadToDeal,
+  create_deal: createDeal,
+  update_deal: updateDeal,
+  create_sales_task: createSalesTask,
+  update_sales_task_status: updateSalesTaskStatus,
+  create_follow_up: createFollowUp,
+  complete_follow_up: completeFollowUp,
+  log_communication: logCommunication,
 };
 
 export async function executeTool(
