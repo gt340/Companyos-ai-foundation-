@@ -70,6 +70,36 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `Generate a risk analysis${
         args.title ? ` titled "${args.title}"` : ""
       }${args.focusArea ? ` on ${args.focusArea}` : ""}`;
+    case "create_crm_company":
+      return `Add "${args.name}" as a CRM company`;
+    case "create_contact":
+      return `Add contact "${args.name}"`;
+    case "create_lead":
+      return `Add lead "${args.name}"${args.source ? ` (source: ${args.source})` : ""}`;
+    case "update_lead":
+      return `Update lead${args.status ? ` status to ${args.status}` : ""}${
+        args.score !== undefined ? `, score to ${args.score}` : ""
+      }`;
+    case "convert_lead_to_deal":
+      return `Convert lead to a new deal: "${args.dealTitle}"`;
+    case "create_deal":
+      return `Create deal "${args.title}"${args.value ? ` (${args.value})` : ""}`;
+    case "update_deal":
+      return `Update deal${args.stageName ? ` to stage "${args.stageName}"` : ""}${
+        args.lostReason ? ` — lost: ${args.lostReason}` : ""
+      }`;
+    case "create_sales_task":
+      return `Create sales task "${args.title}"`;
+    case "update_sales_task_status":
+      return `Mark sales task as ${args.status}`;
+    case "create_follow_up":
+      return `Schedule a follow-up for ${args.dueDate}`;
+    case "complete_follow_up":
+      return "Mark follow-up as completed";
+    case "log_communication":
+      return `Log a ${String(args.channel).toLowerCase()}${args.direction ? ` (${String(args.direction).toLowerCase()})` : ""}`;
+    case "delete_lead":
+      return "Permanently delete this lead";
     default:
       return `Run ${tool}`;
   }
