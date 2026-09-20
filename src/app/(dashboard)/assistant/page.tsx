@@ -102,6 +102,10 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `Log a ${String(args.channel).toLowerCase()}${args.direction ? ` (${String(args.direction).toLowerCase()})` : ""}`;
     case "delete_lead":
       return "Permanently delete this lead";
+    case "generate_quotation":
+      return "Generate a quotation for this deal";
+    case "generate_proposal":
+      return "Generate a proposal for this deal";
     default:
       return `Run ${tool}`;
   }
