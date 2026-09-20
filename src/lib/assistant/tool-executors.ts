@@ -1384,12 +1384,46 @@ async function listCommunicationLogs(
 // ── SALES AGENT / CRM: mutating executors (approval + audit wrapped) ───
 
 async function createCrmCompany(
-  args: { name: string; industry?: string; website?: string; notes?: string },
+  args: {
+    name: string;
+    industry?: string;
+    website?: string;
+    email?: string;
+    phone?: string;
+    size?: string;
+    notes?: string;
+  },
   ctx: ExecutorContext
 ) {
   return withSalesApproval(ctx, "create_crm_company", args, () =>
     prisma.crmCompany.create({ data: { organizationId: ctx.organizationId, ...args } })
   );
+}
+
+async function updateCrmCompany(
+  args: {
+    crmCompanyId: string;
+    industry?: string;
+    website?: string;
+    email?: string;
+    phone?: string;
+    size?: string;
+    notes?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withSalesApproval(ctx, "update_crm_company", args, async () => {
+    const existing = await prisma.crmCompany.findFirst({
+      where: { id: args.crmCompanyId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("CRM company not found in this organization.");
+
+    const { crmCompanyId, ...updates } = args;
+    return prisma.crmCompany.update({
+      where: { id: crmCompanyId },
+      data: updates,
+    });
+  });
 }
 
 async function createContact(
@@ -1969,6 +2003,7 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   list_follow_ups: listFollowUps,
   list_communication_logs: listCommunicationLogs,
   create_crm_company: createCrmCompany,
+  update_crm_company: updateCrmCompany,
   create_contact: createContact,
   create_lead: createLead,
   update_lead: updateLead,
