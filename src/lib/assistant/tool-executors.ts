@@ -2090,6 +2090,71 @@ async function findReactivationCandidates(
   return { leadCount: staleLeads.length, dealCount: staleDeals.length, analysis };
 }
 
+// ── CEO ↔ Sales Agent collaboration ─────────────────────────────────────
+// Deliberately reuses AgentMemory rather than a new table: both agents
+// are already Agent rows, each with their own memory scope. A "message"
+// is just a memory entry on the RECEIVING agent, tagged with where it
+// came from — so it naturally surfaces in that agent's future
+// list_ceo_memories/list_sales... lookups and gets pulled into reports
+// the same way any other memory does. This is one unified assistant
+// playing both roles in a single conversation (not two separately
+// running AI instances messaging each other) — the tool models the
+// hand-off pattern honestly within that real architecture.
+async function sendAgentMessage(
+  args: { toAgent: string; message: string; importance?: number },
+  ctx: ExecutorContext
+) {
+  const toAgent = args.toAgent.toUpperCase();
+  if (toAgent !== "CEO" && toAgent !== "SALES") {
+    throw new Error(`toAgent must be 'CEO' or 'SALES', got "${args.toAgent}".`);
+  }
+  const fromAgent = toAgent === "CEO" ? "SALES" : "CEO";
+  const targetAgentId = toAgent === "CEO" ? ctx.agentId : ctx.salesAgentId;
+
+  const memory = await prisma.agentMemory.create({
+    data: {
+      organizationId: ctx.organizationId,
+      agentId: targetAgentId,
+      type: "BUSINESS_EVENT",
+      content: args.message,
+      importance: Math.min(5, Math.max(1, args.importance ?? 3)),
+      sourceRef: `agent_message_from_${fromAgent}`,
+      createdBy: ctx.userId,
+    },
+  });
+
+  return { id: memory.id, toAgent, fromAgent, message: args.message };
+}
+
+async function listAgentMessages(
+  args: { forAgent: string; limit?: number },
+  ctx: ExecutorContext
+) {
+  const forAgent = args.forAgent.toUpperCase();
+  if (forAgent !== "CEO" && forAgent !== "SALES") {
+    throw new Error(`forAgent must be 'CEO' or 'SALES', got "${args.forAgent}".`);
+  }
+  const targetAgentId = forAgent === "CEO" ? ctx.agentId : ctx.salesAgentId;
+
+  const messages = await prisma.agentMemory.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      agentId: targetAgentId,
+      sourceRef: { startsWith: "agent_message_from_" },
+    },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 10,
+  });
+
+  return messages.map((m) => ({
+    id: m.id,
+    from: m.sourceRef?.replace("agent_message_from_", ""),
+    content: m.content,
+    importance: m.importance,
+    createdAt: m.createdAt,
+  }));
+}
+
 async function rememberCeoInsight(
   args: { type: string; content: string; importance?: number },
   ctx: ExecutorContext
@@ -2408,6 +2473,8 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   predict_conversion: predictConversion,
   analyze_lost_deals: analyzeLostDeals,
   find_reactivation_candidates: findReactivationCandidates,
+  send_agent_message: sendAgentMessage,
+  list_agent_messages: listAgentMessages,
 };
 
 export async function executeTool(
