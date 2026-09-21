@@ -144,6 +144,35 @@ enum ApprovalStatus {
   FAILED
 }
 
+// ── Marketing Agent enums (Phase 8) ──
+
+enum CampaignStatus {
+  PLANNING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContentType {
+  SOCIAL_POST
+  CAPTION
+  BLOG_ARTICLE
+  EMAIL_CAMPAIGN
+  AD_COPY
+  LANDING_PAGE_COPY
+  PRODUCT_DESCRIPTION
+  MARKETING_PLAN
+  VIDEO_SCRIPT
+}
+
+enum ContentStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ARCHIVED
+}
+
 // ───────────── Core identity ─────────────
 
 model User {
@@ -177,6 +206,10 @@ model User {
   salesDocumentsCreated   SalesDocument[]    @relation("SalesDocumentCreatedBy")
   approvalRequestsMade    ApprovalRequest[]  @relation("ApprovalRequestedBy")
   approvalRequestsReviewed ApprovalRequest[] @relation("ApprovalReviewedBy")
+
+  // Phase 8 — Marketing Agent back-relations
+  campaignsCreated    Campaign[]    @relation("CampaignCreatedBy")
+  contentItemsCreated ContentItem[] @relation("ContentItemCreatedBy")
 
   @@map("users")
 }
@@ -217,6 +250,12 @@ model Organization {
   salesDocuments    SalesDocument[]
   approvalRequests  ApprovalRequest[]
   agentActionLogs   AgentActionLog[]
+
+  // Phase 8 — Marketing Agent back-relations
+  campaigns         Campaign[]
+  contentItems      ContentItem[]
+  competitors       Competitor[]
+  marketingProfile  MarketingProfile?
 
   @@index([ownerId])
   @@map("organizations")
@@ -859,3 +898,123 @@ model AgentActionLog {
   @@index([organizationId])
   @@map("agent_action_logs")
 }
+
+// ═════════════════════════════════════════════════════════
+// Marketing Agent (Phase 8)
+// Reuses Company.brandVoice/products/services/targetCustomers/
+// competitors for baseline brand info rather than duplicating —
+// MarketingProfile below only holds fields Company doesn't have.
+// Reuses Agent/AgentMemory/PromptTemplate/ApprovalRequest/
+// AgentActionLog as-is; no changes to those models in this phase.
+// ═════════════════════════════════════════════════════════
+
+model Campaign {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name      String
+  objective String?        @db.Text
+  channel   String // free-form: "social", "email", "ads", "SEO", "PR", "WhatsApp", "website", "other", etc. — not constrained to a fixed list
+  status    CampaignStatus @default(PLANNING)
+
+  budget     Decimal? @db.Decimal(14, 2)
+  costToDate Decimal? @db.Decimal(14, 2)
+  startDate  DateTime?
+  endDate    DateTime?
+
+  // Current-total/snapshot metrics — real supplied data only, never
+  // fabricated. No history table yet; updateCampaignMetrics() is the
+  // one write path so a future time-series table can sit underneath
+  // this without changing Campaign's shape or any tool's interface.
+  impressions Int      @default(0)
+  reach       Int      @default(0)
+  engagement  Int      @default(0) // a real count, not a percentage/rate
+  clicks      Int      @default(0)
+  conversions Int      @default(0)
+  revenue     Decimal? @db.Decimal(14, 2)
+  // ROI is deliberately NOT a stored field — computed at read time from
+  // revenue/costToDate, and reported as "data not connected" when either
+  // is null, rather than ever being persisted or guessed.
+
+  createdBy String? @db.Uuid
+  createdByUser User? @relation("CampaignCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contentItems ContentItem[]
+
+  @@index([organizationId])
+  @@map("campaigns")
+}
+
+model ContentItem {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  campaignId String?   @db.Uuid
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  type    ContentType
+  title   String
+  content String      @db.Text
+  platform String? // e.g. "Instagram", "LinkedIn", "Blog", "Mailchimp"
+  status  ContentStatus @default(DRAFT)
+
+  // Doubles as the Content Calendar — no separate calendar table.
+  scheduledFor DateTime?
+  publishedAt  DateTime?
+
+  performanceNotes String? @db.Text
+
+  createdBy String? @db.Uuid
+  createdByUser User? @relation("ContentItemCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, scheduledFor])
+  @@map("content_items")
+}
+
+model Competitor {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name      String
+  website   String?
+  notes     String? @db.Text
+  strengths String? @db.Text
+  weaknesses String? @db.Text
+
+  lastResearchedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("competitors")
+}
+
+// Brand-memory fields NOT already on Company. Company.brandVoice/
+// products/services/targetCustomers/competitors are read directly by
+// Marketing tools rather than duplicated here.
+model MarketingProfile {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  brandGuidelines      String? @db.Text
+  positioningStatement String? @db.Text
+  defaultTone          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("marketing_profiles")
+}
+
