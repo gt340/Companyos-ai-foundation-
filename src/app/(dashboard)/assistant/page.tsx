@@ -111,6 +111,84 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
   }
 }
 
+// Turns a tool's actual returned data into a short, human-readable line,
+// so the Confirm card's "Done" message shows real results immediately
+// instead of requiring a separate "show me results" follow-up. Only
+// covers fields we know each tool's executor actually returns (per
+// tool-executors.ts) — falls back to nothing extra for anything unknown
+// rather than guessing at a shape.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function summarizeResult(tool: string, result: any): string | null {
+  if (!result || typeof result !== "object") return null;
+
+  switch (tool) {
+    case "create_crm_company":
+    case "update_crm_company":
+      return (
+        [result.name, result.industry, result.email, result.phone, result.size]
+          .filter(Boolean)
+          .join(" · ") || null
+      );
+
+    case "create_contact":
+      return [result.name, result.email, result.phone, result.jobTitle].filter(Boolean).join(" · ") || null;
+
+    case "create_lead":
+    case "update_lead":
+      return [
+        result.name,
+        `status: ${result.status}`,
+        `score: ${result.score}`,
+        result.aiConfidenceScore !== undefined && result.aiConfidenceScore !== null
+          ? `AI confidence: ${result.aiConfidenceScore}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    case "delete_lead":
+      return `"${result.name}" removed.`;
+
+    case "convert_lead_to_deal":
+    case "create_deal":
+    case "update_deal":
+      return [
+        result.title,
+        result.value !== undefined && result.value !== null
+          ? `value: ${result.value} ${result.currency ?? ""}`.trim()
+          : null,
+        result.status ? `status: ${result.status}` : null,
+        result.lostReason ? `lost reason: ${result.lostReason}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    case "create_sales_task":
+      return [result.title, result.dueDate ? `due: ${new Date(result.dueDate).toLocaleDateString()}` : null]
+        .filter(Boolean)
+        .join(" · ");
+
+    case "update_sales_task_status":
+      return `status: ${result.status}`;
+
+    case "create_follow_up":
+      return `due: ${new Date(result.dueDate).toLocaleDateString()}${result.notes ? ` — ${result.notes}` : ""}`;
+
+    case "complete_follow_up":
+      return "Marked completed.";
+
+    case "log_communication":
+      return `[${result.channel}] ${result.content}`;
+
+    case "generate_quotation":
+    case "generate_proposal":
+      return `"${result.title}"\n\n${result.content}`;
+
+    default:
+      return null;
+  }
+}
+
 // Resize/compress an image client-side before it's converted to base64 and
 // uploaded — a raw phone photo can be several MB, which is slow or can
 // stall entirely as a JSON request body over a weak mobile connection.
@@ -547,11 +625,12 @@ export default function AssistantPage() {
         pendingAction.tool,
         pendingAction.arguments
       );
+      const resultDetail = data.success ? summarizeResult(pendingAction.tool, data.result) : null;
 
       const note: ChatMessage = {
         role: "assistant",
         content: data.success
-          ? `✅ Done: ${summary}`
+          ? `✅ Done: ${summary}${resultDetail ? `\n\n${resultDetail}` : ""}`
           : `❌ Couldn't complete "${summary}": ${data.error}`,
       };
 
