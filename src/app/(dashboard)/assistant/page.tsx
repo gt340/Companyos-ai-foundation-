@@ -106,6 +106,24 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return "Generate a quotation for this deal";
     case "generate_proposal":
       return "Generate a proposal for this deal";
+    case "update_marketing_profile":
+      return "Update marketing brand profile";
+    case "create_campaign":
+      return `Create campaign "${args.name}" (${args.channel})`;
+    case "update_campaign":
+      return `Update campaign${args.status ? ` status to ${args.status}` : ""}`;
+    case "update_campaign_metrics":
+      return "Update campaign performance metrics";
+    case "create_content_item":
+      return `Draft ${String(args.type).toLowerCase().replace(/_/g, " ")}: "${args.title}"`;
+    case "update_content_item":
+      return "Update content item";
+    case "publish_content":
+      return "Publish this content externally";
+    case "create_competitor":
+      return `Add competitor "${args.name}"`;
+    case "update_competitor":
+      return "Update competitor research";
     default:
       return `Run ${tool}`;
   }
@@ -183,6 +201,45 @@ function summarizeResult(tool: string, result: any): string | null {
     case "generate_quotation":
     case "generate_proposal":
       return `"${result.title}"\n\n${result.content}`;
+
+    case "update_marketing_profile":
+      return [result.brandGuidelines, result.positioningStatement, result.defaultTone]
+        .filter(Boolean)
+        .join(" · ") || null;
+
+    case "create_campaign":
+    case "update_campaign":
+      return [
+        result.name,
+        `channel: ${result.channel}`,
+        `status: ${result.status}`,
+        result.budget !== undefined && result.budget !== null ? `budget: ${result.budget}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    case "update_campaign_metrics":
+      return [
+        `impressions: ${result.impressions}`,
+        `reach: ${result.reach}`,
+        `engagement: ${result.engagement}`,
+        `clicks: ${result.clicks}`,
+        `conversions: ${result.conversions}`,
+        result.revenue !== undefined && result.revenue !== null ? `revenue: ${result.revenue}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    case "create_content_item":
+    case "update_content_item":
+      return `"${result.title}" · ${result.status}${result.platform ? ` · ${result.platform}` : ""}`;
+
+    case "publish_content":
+      return `"${result.title}" is now PUBLISHED.`;
+
+    case "create_competitor":
+    case "update_competitor":
+      return [result.name, result.website, result.notes].filter(Boolean).join(" · ") || null;
 
     default:
       return null;
