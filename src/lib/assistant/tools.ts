@@ -1032,7 +1032,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     mutating: false,
     parameters: {
       type: "object",
-      properties: { campaignId: { type: "string" } },
+      properties: { campaignId: { type: "string", description: "The campaign's ID or its name — either works." } },
       required: ["campaignId"],
     },
   },
@@ -1045,7 +1045,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       properties: {
         type: { type: "string", description: "Optional: SOCIAL_POST, CAPTION, BLOG_ARTICLE, EMAIL_CAMPAIGN, AD_COPY, LANDING_PAGE_COPY, PRODUCT_DESCRIPTION, MARKETING_PLAN, or VIDEO_SCRIPT." },
         status: { type: "string", description: "Optional: DRAFT, SCHEDULED, PUBLISHED, or ARCHIVED." },
-        campaignId: { type: "string" },
+        campaignId: { type: "string", description: "The campaign's ID or its name — either works." },
         upcomingOnly: { type: "boolean", description: "Only items with a future scheduledFor date. Defaults to false." },
         limit: { type: "number", description: "Max results. Defaults to 20." },
       },
@@ -1110,7 +1110,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     parameters: {
       type: "object",
       properties: {
-        campaignId: { type: "string" },
+        campaignId: { type: "string", description: "The campaign's ID or its name — either works." },
         status: { type: "string", description: "PLANNING, ACTIVE, PAUSED, COMPLETED, or CANCELLED." },
         objective: { type: "string" },
         budget: { type: "number" },
@@ -1128,7 +1128,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     parameters: {
       type: "object",
       properties: {
-        campaignId: { type: "string" },
+        campaignId: { type: "string", description: "The campaign's ID or its name — either works." },
         impressions: { type: "number" },
         reach: { type: "number" },
         engagement: { type: "number", description: "Real count of engagements (likes, comments, shares, etc.), not a rate." },
@@ -1150,7 +1150,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         title: { type: "string" },
         content: { type: "string" },
         platform: { type: "string", description: "e.g. 'Instagram', 'LinkedIn', 'Blog', 'Mailchimp'." },
-        campaignId: { type: "string" },
+        campaignId: { type: "string", description: "The campaign's ID or its name — either works." },
         scheduledFor: { type: "string", description: "ISO date/time — sets status to SCHEDULED if provided." },
       },
       required: ["type", "title", "content"],
