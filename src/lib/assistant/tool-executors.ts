@@ -2242,16 +2242,31 @@ async function findReactivationCandidates(
 // playing both roles in a single conversation (not two separately
 // running AI instances messaging each other) — the tool models the
 // hand-off pattern honestly within that real architecture.
+const AGENT_TYPES = ["CEO", "SALES", "MARKETING"] as const;
+type AgentTypeName = (typeof AGENT_TYPES)[number];
+
+function resolveAgentIdByType(ctx: ExecutorContext, type: AgentTypeName): string {
+  if (type === "CEO") return ctx.agentId;
+  if (type === "SALES") return ctx.salesAgentId;
+  return ctx.marketingAgentId;
+}
+
 async function sendAgentMessage(
-  args: { toAgent: string; message: string; importance?: number },
+  args: { fromAgent: string; toAgent: string; message: string; importance?: number },
   ctx: ExecutorContext
 ) {
   const toAgent = args.toAgent.toUpperCase();
-  if (toAgent !== "CEO" && toAgent !== "SALES") {
-    throw new Error(`toAgent must be 'CEO' or 'SALES', got "${args.toAgent}".`);
+  const fromAgent = args.fromAgent.toUpperCase();
+  if (!AGENT_TYPES.includes(toAgent as AgentTypeName)) {
+    throw new Error(`toAgent must be one of ${AGENT_TYPES.join(", ")}, got "${args.toAgent}".`);
   }
-  const fromAgent = toAgent === "CEO" ? "SALES" : "CEO";
-  const targetAgentId = toAgent === "CEO" ? ctx.agentId : ctx.salesAgentId;
+  if (!AGENT_TYPES.includes(fromAgent as AgentTypeName)) {
+    throw new Error(`fromAgent must be one of ${AGENT_TYPES.join(", ")}, got "${args.fromAgent}".`);
+  }
+  if (toAgent === fromAgent) {
+    throw new Error("fromAgent and toAgent can't be the same function.");
+  }
+  const targetAgentId = resolveAgentIdByType(ctx, toAgent as AgentTypeName);
 
   const memory = await prisma.agentMemory.create({
     data: {
@@ -2273,10 +2288,10 @@ async function listAgentMessages(
   ctx: ExecutorContext
 ) {
   const forAgent = args.forAgent.toUpperCase();
-  if (forAgent !== "CEO" && forAgent !== "SALES") {
-    throw new Error(`forAgent must be 'CEO' or 'SALES', got "${args.forAgent}".`);
+  if (!AGENT_TYPES.includes(forAgent as AgentTypeName)) {
+    throw new Error(`forAgent must be one of ${AGENT_TYPES.join(", ")}, got "${args.forAgent}".`);
   }
-  const targetAgentId = forAgent === "CEO" ? ctx.agentId : ctx.salesAgentId;
+  const targetAgentId = resolveAgentIdByType(ctx, forAgent as AgentTypeName);
 
   const messages = await prisma.agentMemory.findMany({
     where: {
