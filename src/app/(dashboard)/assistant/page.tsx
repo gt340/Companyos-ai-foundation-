@@ -124,6 +124,8 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return `Add competitor "${args.name}"`;
     case "update_competitor":
       return "Update competitor research";
+    case "generate_marketing_report":
+      return `Generate a marketing report${args.title ? ` titled "${args.title}"` : ""}`;
     default:
       return `Run ${tool}`;
   }
