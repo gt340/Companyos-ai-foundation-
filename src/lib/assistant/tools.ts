@@ -976,30 +976,31 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
 
-  // ── CEO ↔ SALES AGENT COLLABORATION ─────────────────────────────────
+  // ── CEO ↔ SALES ↔ MARKETING COLLABORATION ───────────────────────────
 
   {
     name: "send_agent_message",
-    description: "Record a note from one agent function to the other (e.g. the Sales function flagging something the CEO function should know, or the CEO function directing the Sales function to investigate or act on something). Saved to the receiving agent's memory so it carries into future conversations and reports. Does not change company data, so it runs immediately without requiring confirmation.",
+    description: "Record a note from one agent function to another (e.g. the Marketing function flagging a campaign insight the CEO should know, the Sales function flagging a pipeline issue, or the CEO directing another function to investigate or act on something). Saved to the receiving function's memory so it carries into future conversations and reports. Does not change company data, so it runs immediately without requiring confirmation.",
     mutating: false,
     parameters: {
       type: "object",
       properties: {
-        toAgent: { type: "string", description: "Which function this is directed to: 'CEO' or 'SALES'." },
+        fromAgent: { type: "string", description: "Which function is sending this: 'CEO', 'SALES', or 'MARKETING'." },
+        toAgent: { type: "string", description: "Which function this is directed to: 'CEO', 'SALES', or 'MARKETING'. Must differ from fromAgent." },
         message: { type: "string", description: "The note or directive to record." },
         importance: { type: "number", description: "1 (low) to 5 (critical). Defaults to 3." },
       },
-      required: ["toAgent", "message"],
+      required: ["fromAgent", "toAgent", "message"],
     },
   },
   {
     name: "list_agent_messages",
-    description: "List recent cross-agent messages directed to a given agent function (CEO or Sales). Use this to check whether the other function has flagged or requested anything.",
+    description: "List recent cross-agent messages directed to a given agent function (CEO, Sales, or Marketing). Use this to check whether another function has flagged or requested anything.",
     mutating: false,
     parameters: {
       type: "object",
       properties: {
-        forAgent: { type: "string", description: "'CEO' or 'SALES'." },
+        forAgent: { type: "string", description: "'CEO', 'SALES', or 'MARKETING'." },
         limit: { type: "number", description: "Max results. Defaults to 10." },
       },
       required: ["forAgent"],
