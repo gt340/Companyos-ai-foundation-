@@ -1005,6 +1005,215 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["forAgent"],
     },
   },
+
+  // ── MARKETING AGENT — READ-ONLY TOOLS ───────────────────────────────
+
+  {
+    name: "get_marketing_profile",
+    description: "Get the company's marketing brand profile (brand guidelines, positioning statement, default tone). Note: brand voice, products, services, target customers, and competitor names live on the main company profile, not here — use get_organization_settings or the company context already available for those.",
+    mutating: false,
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "list_campaigns",
+    description: "List marketing campaigns, optionally filtered by status.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Optional filter: PLANNING, ACTIVE, PAUSED, COMPLETED, or CANCELLED." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "get_campaign",
+    description: "Get full details of a specific campaign, including its content items and computed ROI (only when both cost and revenue are actually recorded).",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { campaignId: { type: "string" } },
+      required: ["campaignId"],
+    },
+  },
+  {
+    name: "list_content_items",
+    description: "List marketing content items (social posts, articles, emails, ad copy, etc.), optionally filtered by type, status, or campaign. This also serves as the content calendar — filter by scheduled items to see what's upcoming.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "Optional: SOCIAL_POST, CAPTION, BLOG_ARTICLE, EMAIL_CAMPAIGN, AD_COPY, LANDING_PAGE_COPY, PRODUCT_DESCRIPTION, MARKETING_PLAN, or VIDEO_SCRIPT." },
+        status: { type: "string", description: "Optional: DRAFT, SCHEDULED, PUBLISHED, or ARCHIVED." },
+        campaignId: { type: "string" },
+        upcomingOnly: { type: "boolean", description: "Only items with a future scheduledFor date. Defaults to false." },
+        limit: { type: "number", description: "Max results. Defaults to 20." },
+      },
+    },
+  },
+  {
+    name: "get_content_item",
+    description: "Get the full details of a specific content item.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { contentItemId: { type: "string" } },
+      required: ["contentItemId"],
+    },
+  },
+  {
+    name: "list_competitors",
+    description: "List tracked competitors with their research notes.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { limit: { type: "number", description: "Max results. Defaults to 20." } },
+    },
+  },
+
+  // ── MARKETING AGENT — MUTATING TOOLS ────────────────────────────────
+
+  {
+    name: "update_marketing_profile",
+    description: "Update the company's marketing brand profile (brand guidelines, positioning statement, default tone). Creates it if it doesn't exist yet.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        brandGuidelines: { type: "string" },
+        positioningStatement: { type: "string" },
+        defaultTone: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "create_campaign",
+    description: "Create a new marketing campaign.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        objective: { type: "string" },
+        channel: { type: "string", description: "e.g. 'social', 'email', 'ads', 'SEO', 'PR', 'WhatsApp', 'website', 'other' — not restricted to this list." },
+        budget: { type: "number" },
+        startDate: { type: "string", description: "ISO date." },
+        endDate: { type: "string", description: "ISO date." },
+      },
+      required: ["name", "channel"],
+    },
+  },
+  {
+    name: "update_campaign",
+    description: "Update a campaign's status, objective, budget, cost, or dates. For the tracked performance metrics (impressions, reach, engagement, clicks, conversions, revenue), use update_campaign_metrics instead.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        campaignId: { type: "string" },
+        status: { type: "string", description: "PLANNING, ACTIVE, PAUSED, COMPLETED, or CANCELLED." },
+        objective: { type: "string" },
+        budget: { type: "number" },
+        costToDate: { type: "number" },
+        startDate: { type: "string", description: "ISO date." },
+        endDate: { type: "string", description: "ISO date." },
+      },
+      required: ["campaignId"],
+    },
+  },
+  {
+    name: "update_campaign_metrics",
+    description: "Update a campaign's real recorded performance metrics (impressions, reach, engagement, clicks, conversions, revenue). Only supply values that are actually known — never guess a metric to fill this in. Engagement is a real count, not a percentage.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        campaignId: { type: "string" },
+        impressions: { type: "number" },
+        reach: { type: "number" },
+        engagement: { type: "number", description: "Real count of engagements (likes, comments, shares, etc.), not a rate." },
+        clicks: { type: "number" },
+        conversions: { type: "number" },
+        revenue: { type: "number" },
+      },
+      required: ["campaignId"],
+    },
+  },
+  {
+    name: "create_content_item",
+    description: "Create a new marketing content item (draft). Does not publish it — publishing is a separate step (publish_content) that respects approval requirements.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "SOCIAL_POST, CAPTION, BLOG_ARTICLE, EMAIL_CAMPAIGN, AD_COPY, LANDING_PAGE_COPY, PRODUCT_DESCRIPTION, MARKETING_PLAN, or VIDEO_SCRIPT." },
+        title: { type: "string" },
+        content: { type: "string" },
+        platform: { type: "string", description: "e.g. 'Instagram', 'LinkedIn', 'Blog', 'Mailchimp'." },
+        campaignId: { type: "string" },
+        scheduledFor: { type: "string", description: "ISO date/time — sets status to SCHEDULED if provided." },
+      },
+      required: ["type", "title", "content"],
+    },
+  },
+  {
+    name: "update_content_item",
+    description: "Update a content item's title, content, platform, schedule, or performance notes.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        contentItemId: { type: "string" },
+        title: { type: "string" },
+        content: { type: "string" },
+        platform: { type: "string" },
+        scheduledFor: { type: "string", description: "ISO date/time." },
+        performanceNotes: { type: "string" },
+      },
+      required: ["contentItemId"],
+    },
+  },
+  {
+    name: "publish_content",
+    description: "Mark a content item as published (sets publishedAt and status to PUBLISHED). This represents an external publishing action and always requires explicit confirmation before it takes effect.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: { contentItemId: { type: "string" } },
+      required: ["contentItemId"],
+    },
+  },
+  {
+    name: "create_competitor",
+    description: "Add a new tracked competitor.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        website: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "update_competitor",
+    description: "Update a competitor's notes, strengths, weaknesses, website, or mark it as freshly researched (updates lastResearchedAt to now).",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        competitorId: { type: "string" },
+        website: { type: "string" },
+        notes: { type: "string" },
+        strengths: { type: "string" },
+        weaknesses: { type: "string" },
+        markResearched: { type: "boolean", description: "If true, sets lastResearchedAt to now." },
+      },
+      required: ["competitorId"],
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
