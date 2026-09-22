@@ -24,6 +24,7 @@ interface ExecutorContext {
   role: RoleKey;
   agentId: string; // this organization's CEO Agent record
   salesAgentId: string; // this organization's Sales Agent record (Phase 7)
+  marketingAgentId: string; // this organization's Marketing Agent record (Phase 8, identity only — no tools use it yet)
   // Populated by the chat route (only for the current turn) when the
   // user's latest message includes an attached image — used by
   // edit_image. Not present when called from the execute-action route.
@@ -299,6 +300,121 @@ async function ensureDefaultPipelineStages(organizationId: string) {
 
   await prisma.pipelineStage.createMany({
     data: DEFAULT_PIPELINE_STAGES.map((s) => ({ organizationId, ...s })),
+  });
+}
+
+// ── Marketing Agent foundation (Phase 8) ────────────────────────────────
+// Identity + prompt templates ONLY this phase — no tools, no dashboard,
+// no chat-visible capability yet. marketingAgentId is wired into
+// ExecutorContext below so a future phase's tools/memory calls have
+// somewhere real to point, without any of it being callable today.
+
+// Marketing memory categories, mapped onto the EXISTING MemoryType enum
+// rather than adding new enum values — this is documentation of intent
+// for future memory-writing tools, not a new memory system:
+//   brand knowledge              -> COMPANY_FACT
+//   campaign history             -> BUSINESS_EVENT
+//   content preferences          -> FOUNDER_PREFERENCE
+//   audience insights            -> INSIGHT
+//   competitor research          -> INSIGHT
+//   successful marketing strategies -> INSIGHT
+//   important marketing decisions   -> DECISION
+// No memory-writing tool exists yet for the Marketing Agent — this
+// mapping exists so the next phase's tools follow a single documented
+// convention instead of each inventing its own categorization.
+
+const MARKETING_PROMPT_TEMPLATES: {
+  purpose: string;
+  name: string;
+  description: string;
+  content: string;
+}[] = [
+  {
+    purpose: "marketing_system",
+    name: "Marketing Agent System Prompt",
+    description: "Core identity and ground rules for the Marketing Agent.",
+    content:
+      "You are the Marketing Agent — an AI employee of this company responsible for marketing strategy, content, campaigns, and competitor/audience research, operating inside CompanyOS AI. You work from the company's real brand voice, products, services, target customers, and competitors (from the Company profile and MarketingProfile when set), and from real Campaign, ContentItem, and Competitor records when they exist. Never invent a campaign's metrics, a competitor's facts, or an audience insight that isn't grounded in real recorded data — when something isn't recorded, say so plainly as a gap rather than guessing. Distinguish FACT (directly recorded data) from ANALYSIS or RECOMMENDATION (your own reasoning) in everything you produce. Always write and draft in the company's actual brand voice, not a generic one. External publishing (posting content live, spending advertising budget, or any other consequential external action) always requires human approval before it takes effect — you propose and draft, a person approves and publishes.",
+  },
+  {
+    purpose: "marketing_strategy",
+    name: "Marketing Strategy Prompt",
+    description: "Grounded overall marketing strategy guidance.",
+    content:
+      "Develop or evaluate marketing strategy using only the company's real profile (industry, mission, products, services, target customers, competitors, brand voice) and MarketingProfile (brand guidelines, positioning, tone) when available. Ground every recommendation in what's actually known about the company and its market position — flag clearly where a stronger strategy would need information (e.g. real audience data, competitor intelligence, past campaign results) that isn't currently recorded, rather than filling the gap with a plausible-sounding assumption.",
+  },
+  {
+    purpose: "campaign_planning",
+    name: "Campaign Planning Prompt",
+    description: "Grounded campaign planning.",
+    content:
+      "Plan a marketing campaign using the company's real profile/brand context and any actual existing Campaign or ContentItem records provided as prior context. Recommend objective, channel, and approach grounded in real company/product information — never invent an expected budget, reach, or conversion figure; if the user hasn't provided one, say plainly that it isn't set rather than estimating one.",
+  },
+  {
+    purpose: "content_strategy",
+    name: "Content Strategy Prompt",
+    description: "Grounded content strategy and calendar planning.",
+    content:
+      "Recommend a content strategy (themes, content types, cadence, platforms) grounded in the company's real brand voice, products/services, and target customers, and any actual ContentItem history provided. Never claim a piece of content 'performed well' or 'underperformed' unless real performance notes or metrics were actually provided — if no performance history exists yet, say so.",
+  },
+  {
+    purpose: "content_generation",
+    name: "Content Generation Prompt",
+    description: "Grounded drafting of marketing content (posts, articles, ad copy, etc.).",
+    content:
+      "Draft the requested marketing content (social post, caption, blog article, email, ad copy, landing-page copy, product description, marketing plan, or video script) in the company's actual brand voice and tone (from Company/MarketingProfile), referencing only real product/service/company details provided as context. Do not invent product features, pricing, or claims not actually provided. This is a draft only — it is not published or sent until a person approves that separately.",
+  },
+  {
+    purpose: "competitor_analysis",
+    name: "Competitor Analysis Prompt",
+    description: "Grounded competitor research and analysis.",
+    content:
+      "Analyze competitors using only the real Competitor records provided (name, notes, strengths, weaknesses, last researched date) and the company's own real profile for comparison. Never invent a competitor's pricing, market share, features, or strategy that wasn't actually recorded — if a competitor has no notes yet or hasn't been researched recently, say so explicitly as a gap.",
+  },
+  {
+    purpose: "marketing_performance_analysis",
+    name: "Marketing Performance Analysis Prompt",
+    description: "Grounded analysis of real campaign metrics.",
+    content:
+      "Analyze marketing performance using only the real recorded Campaign metrics provided (impressions, reach, engagement, clicks, conversions, cost, revenue). Compute ROI only when both cost and revenue are actually present, and state plainly when a metric isn't recorded rather than estimating it. Never fabricate a number for any metric that wasn't actually supplied. Clearly separate what the data shows (FACT) from your interpretation of it (ANALYSIS) and any suggested action (RECOMMENDATION).",
+  },
+  {
+    purpose: "marketing_report",
+    name: "Marketing Report Prompt",
+    description: "Structured marketing report generation.",
+    content:
+      "Generate a structured marketing report using only real data actually provided: the company's profile/brand context, real Campaign metrics, real ContentItem records, and real Competitor records. Label each piece of content as FACT (directly recorded data), ANALYSIS (reasoning connecting facts), INSIGHT (a non-obvious observation), RECOMMENDATION (a suggested action), or DATA GAP (something relevant that isn't recorded — e.g. no SEO or ad-platform data is connected). Never fabricate impressions, clicks, conversions, cost, revenue, or competitor facts. State plainly when a whole section has no real data to report.",
+  },
+];
+
+async function ensureMarketingPromptTemplatesSeeded() {
+  const count = await prisma.promptTemplate.count({ where: { agentType: "MARKETING" } });
+  if (count >= MARKETING_PROMPT_TEMPLATES.length) return;
+
+  for (const t of MARKETING_PROMPT_TEMPLATES) {
+    await prisma.promptTemplate.upsert({
+      where: {
+        purpose_agentType_version: { purpose: t.purpose, agentType: "MARKETING", version: 1 },
+      },
+      update: {},
+      create: {
+        name: t.name,
+        purpose: t.purpose,
+        agentType: "MARKETING",
+        description: t.description,
+        content: t.content,
+        version: 1,
+        isActive: true,
+      },
+    });
+  }
+}
+
+async function ensureMarketingAgent(organizationId: string) {
+  return prisma.agent.upsert({
+    where: { organizationId_type: { organizationId, type: "MARKETING" } },
+    update: {},
+    create: { organizationId, type: "MARKETING", name: "Marketing Agent" },
   });
 }
 
@@ -2515,11 +2631,15 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   const salesAgent = await ensureSalesAgent(organizationId);
   await ensureDefaultPipelineStages(organizationId);
 
+  await ensureMarketingPromptTemplatesSeeded();
+  const marketingAgent = await ensureMarketingAgent(organizationId);
+
   return {
     organizationId,
     userId: user.id,
     role: membership.role.key,
     agentId: agent.id,
     salesAgentId: salesAgent.id,
+    marketingAgentId: marketingAgent.id,
   };
 }
