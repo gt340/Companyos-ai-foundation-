@@ -1214,6 +1214,91 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["competitorId"],
     },
   },
+
+  // ── MARKETING AGENT — AI CAPABILITIES ───────────────────────────────
+
+  {
+    name: "generate_marketing_strategy",
+    description: "Generate marketing strategy guidance grounded in the company's real brand profile, products, services, target customers, and marketing profile. Read-only — does not save anything.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        focusArea: { type: "string", description: "Optional: what to focus the strategy on." },
+      },
+    },
+  },
+  {
+    name: "generate_campaign_plan",
+    description: "Plan a marketing campaign grounded in the company's real brand context. Read-only — does not create the campaign; use create_campaign afterward to actually save it.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        objective: { type: "string" },
+        channel: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "generate_content_strategy",
+    description: "Recommend a content strategy (themes, types, cadence, platforms) grounded in the company's real brand voice and actual content history. Read-only.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        focusArea: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "draft_content",
+    description: "Draft marketing content (social post, caption, blog article, email, ad copy, landing-page copy, product description, marketing plan, or video script) grounded in the company's real brand voice and, if linked, a real campaign's context. Read-only — returns the draft text only; use create_content_item afterward to actually save it.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "SOCIAL_POST, CAPTION, BLOG_ARTICLE, EMAIL_CAMPAIGN, AD_COPY, LANDING_PAGE_COPY, PRODUCT_DESCRIPTION, MARKETING_PLAN, or VIDEO_SCRIPT." },
+        brief: { type: "string", description: "What the content should be about / achieve." },
+        platform: { type: "string", description: "e.g. 'Instagram', 'LinkedIn', 'Blog'." },
+        campaignId: { type: "string", description: "Optional: the campaign's ID or name, to ground the draft in that campaign's objective/channel." },
+      },
+      required: ["type", "brief"],
+    },
+  },
+  {
+    name: "analyze_competitor",
+    description: "Analyze a specific tracked competitor using only its real recorded notes, strengths, and weaknesses. Read-only.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { competitorId: { type: "string" } },
+      required: ["competitorId"],
+    },
+  },
+  {
+    name: "analyze_marketing_performance",
+    description: "Analyze a campaign's real recorded performance metrics, with ROI computed only when both cost and revenue are actually recorded. Read-only.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: { campaignId: { type: "string", description: "The campaign's ID or its name — either works." } },
+      required: ["campaignId"],
+    },
+  },
+  {
+    name: "generate_marketing_report",
+    description: "Generate a structured marketing report using only real data: the company's brand profile, real campaigns and their metrics, and real tracked competitors. Never fabricates metrics or competitor facts; states plainly when a section has no real data. Saved permanently (same Executive Reports system used by the CEO Agent, tagged as a Marketing report).",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        reportingPeriod: { type: "string", description: "e.g. 'Q3 2026'." },
+        focusArea: { type: "string" },
+      },
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
