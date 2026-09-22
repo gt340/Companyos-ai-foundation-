@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl, cleanText } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
-import type { RoleKey, MemoryType, LeadStatus, DealStatus, SalesTaskStatus, CommunicationChannel } from "@prisma/client";
+import type { RoleKey, MemoryType, LeadStatus, DealStatus, SalesTaskStatus, CommunicationChannel, CampaignStatus, ContentType, ContentStatus } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -1216,15 +1216,16 @@ async function deleteKnowledgeDocument(
   return { deleted: true, documentId: args.documentId };
 }
 
-// ── SALES AGENT / CRM: approval + audit logging ─────────────────────────
-// Every mutating Sales tool runs through this. Since the app's Confirm
-// card IS the approval step (no separate multi-person approval queue
-// exists yet), the ApprovalRequest row is created already APPROVED at the
-// moment of confirmation, then flipped to EXECUTED/FAILED with the real
-// result — giving genuine queryable history rather than just the
-// transient in-memory Confirm-card state.
-async function withSalesApproval<T>(
+// ── SHARED ACROSS AGENTS: approval + audit logging ──────────────────────
+// Every mutating Sales or Marketing tool runs through this. Since the
+// app's Confirm card IS the approval step (no separate multi-person
+// approval queue exists yet), the ApprovalRequest row is created already
+// APPROVED at the moment of confirmation, then flipped to EXECUTED/FAILED
+// with the real result — giving genuine queryable history rather than
+// just the transient in-memory Confirm-card state.
+async function withAgentApproval<T>(
   ctx: ExecutorContext,
+  agentId: string,
   actionType: string,
   proposedAction: unknown,
   run: () => Promise<T>
@@ -1232,7 +1233,7 @@ async function withSalesApproval<T>(
   const approval = await prisma.approvalRequest.create({
     data: {
       organizationId: ctx.organizationId,
-      agentId: ctx.salesAgentId,
+      agentId,
       actionType,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       proposedAction: proposedAction as any,
@@ -1249,7 +1250,7 @@ async function withSalesApproval<T>(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: { status: "EXECUTED", result: result as any },
     });
-    await logSalesAction(ctx, actionType, proposedAction, result, "EXECUTED", "success");
+    await logAgentAction(ctx, agentId, actionType, proposedAction, result, "EXECUTED", "success");
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -1257,17 +1258,18 @@ async function withSalesApproval<T>(
       where: { id: approval.id },
       data: { status: "FAILED", result: { error: message } },
     });
-    await logSalesAction(ctx, actionType, proposedAction, null, "FAILED", message);
+    await logAgentAction(ctx, agentId, actionType, proposedAction, null, "FAILED", message);
     throw err;
   }
 }
 
-// Every Sales Agent action — read or write — gets an AgentActionLog row,
-// per the audit requirement (agent, action, time, reason, input, output,
+// Every agent action — read or write — gets an AgentActionLog row, per
+// the audit requirement (agent, action, time, reason, input, output,
 // approval, result). Read-only lookups pass approvalStatus null (nothing
 // to approve) and a short result summary.
-async function logSalesAction(
+async function logAgentAction(
   ctx: ExecutorContext,
+  agentId: string,
   action: string,
   input: unknown,
   output: unknown,
@@ -1278,7 +1280,7 @@ async function logSalesAction(
     await prisma.agentActionLog.create({
       data: {
         organizationId: ctx.organizationId,
-        agentId: ctx.salesAgentId,
+        agentId,
         action,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         input: (input ?? {}) as any,
@@ -1294,10 +1296,34 @@ async function logSalesAction(
   }
 }
 
+// Thin Sales-specific wrappers — unchanged behavior, unchanged call sites.
+// Every existing Sales tool calls these exactly as before; nothing about
+// Phase 7 changes.
+async function withSalesApproval<T>(
+  ctx: ExecutorContext,
+  actionType: string,
+  proposedAction: unknown,
+  run: () => Promise<T>
+): Promise<T> {
+  return withAgentApproval(ctx, ctx.salesAgentId, actionType, proposedAction, run);
+}
+
+async function logSalesAction(
+  ctx: ExecutorContext,
+  action: string,
+  input: unknown,
+  output: unknown,
+  approvalStatus: "EXECUTED" | "FAILED" | null,
+  result: string
+) {
+  return logAgentAction(ctx, ctx.salesAgentId, action, input, output, approvalStatus, result);
+}
+
 async function resolveStageId(
   organizationId: string,
   stageName?: string,
   fallbackToFirst = true
+
 ): Promise<string> {
   if (stageName) {
     const stage = await prisma.pipelineStage.findFirst({
@@ -2271,6 +2297,305 @@ async function listAgentMessages(
   }));
 }
 
+// ── MARKETING AGENT: read-only executors ────────────────────────────────
+
+async function getMarketingProfile(_args: unknown, ctx: ExecutorContext) {
+  const profile = await prisma.marketingProfile.findUnique({
+    where: { organizationId: ctx.organizationId },
+  });
+  await logAgentAction(ctx, ctx.marketingAgentId, "get_marketing_profile", {}, profile, null, "fetched");
+  return profile ?? { note: "No marketing profile set up yet — brand guidelines, positioning, and default tone are all unset." };
+}
+
+async function listCampaigns(args: { status?: string; limit?: number }, ctx: ExecutorContext) {
+  return prisma.campaign.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.status ? { status: args.status.toUpperCase() as CampaignStatus } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function getCampaign(args: { campaignId: string }, ctx: ExecutorContext) {
+  const campaign = await prisma.campaign.findFirst({
+    where: { id: args.campaignId, organizationId: ctx.organizationId },
+    include: { contentItems: true },
+  });
+  if (!campaign) throw new Error("Campaign not found in this organization.");
+
+  const cost = campaign.costToDate !== null ? Number(campaign.costToDate) : null;
+  const revenue = campaign.revenue !== null ? Number(campaign.revenue) : null;
+  const roi =
+    cost !== null && revenue !== null && cost > 0
+      ? Math.round(((revenue - cost) / cost) * 100)
+      : null;
+
+  return {
+    ...campaign,
+    roiPercent: roi,
+    roiNote: roi === null ? "ROI not available — cost and/or revenue not recorded (data not connected)." : undefined,
+  };
+}
+
+async function listContentItems(
+  args: { type?: string; status?: string; campaignId?: string; upcomingOnly?: boolean; limit?: number },
+  ctx: ExecutorContext
+) {
+  return prisma.contentItem.findMany({
+    where: {
+      organizationId: ctx.organizationId,
+      ...(args.type ? { type: args.type.toUpperCase() as ContentType } : {}),
+      ...(args.status ? { status: args.status.toUpperCase() as ContentStatus } : {}),
+      ...(args.campaignId ? { campaignId: args.campaignId } : {}),
+      ...(args.upcomingOnly ? { scheduledFor: { gte: new Date() } } : {}),
+    },
+    orderBy: { scheduledFor: "asc" },
+    take: args.limit ?? 20,
+  });
+}
+
+async function getContentItem(args: { contentItemId: string }, ctx: ExecutorContext) {
+  const item = await prisma.contentItem.findFirst({
+    where: { id: args.contentItemId, organizationId: ctx.organizationId },
+    include: { campaign: true },
+  });
+  if (!item) throw new Error("Content item not found in this organization.");
+  return item;
+}
+
+async function listCompetitors(args: { limit?: number }, ctx: ExecutorContext) {
+  return prisma.competitor.findMany({
+    where: { organizationId: ctx.organizationId },
+    orderBy: { createdAt: "desc" },
+    take: args.limit ?? 20,
+  });
+}
+
+// ── MARKETING AGENT: mutating executors (approval + audit wrapped) ─────
+
+async function updateMarketingProfile(
+  args: { brandGuidelines?: string; positioningStatement?: string; defaultTone?: string },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "update_marketing_profile", args, () =>
+    prisma.marketingProfile.upsert({
+      where: { organizationId: ctx.organizationId },
+      update: args,
+      create: { organizationId: ctx.organizationId, ...args },
+    })
+  );
+}
+
+async function createCampaign(
+  args: {
+    name: string;
+    objective?: string;
+    channel: string;
+    budget?: number;
+    startDate?: string;
+    endDate?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "create_campaign", args, () =>
+    prisma.campaign.create({
+      data: {
+        organizationId: ctx.organizationId,
+        name: args.name,
+        objective: args.objective,
+        channel: args.channel,
+        budget: args.budget,
+        startDate: args.startDate ? new Date(args.startDate) : undefined,
+        endDate: args.endDate ? new Date(args.endDate) : undefined,
+        createdBy: ctx.userId,
+      },
+    })
+  );
+}
+
+async function updateCampaign(
+  args: {
+    campaignId: string;
+    status?: string;
+    objective?: string;
+    budget?: number;
+    costToDate?: number;
+    startDate?: string;
+    endDate?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "update_campaign", args, async () => {
+    const existing = await prisma.campaign.findFirst({
+      where: { id: args.campaignId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Campaign not found in this organization.");
+
+    return prisma.campaign.update({
+      where: { id: args.campaignId },
+      data: {
+        ...(args.status ? { status: args.status.toUpperCase() as CampaignStatus } : {}),
+        ...(args.objective !== undefined ? { objective: args.objective } : {}),
+        ...(args.budget !== undefined ? { budget: args.budget } : {}),
+        ...(args.costToDate !== undefined ? { costToDate: args.costToDate } : {}),
+        ...(args.startDate ? { startDate: new Date(args.startDate) } : {}),
+        ...(args.endDate ? { endDate: new Date(args.endDate) } : {}),
+      },
+    });
+  });
+}
+
+// Dedicated service boundary, per Commander's instruction — metrics
+// updates go through this one function only, so a future time-series
+// history table can be added underneath it later without changing this
+// function's signature or any tool's public interface.
+async function updateCampaignMetrics(
+  args: {
+    campaignId: string;
+    impressions?: number;
+    reach?: number;
+    engagement?: number;
+    clicks?: number;
+    conversions?: number;
+    revenue?: number;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "update_campaign_metrics", args, async () => {
+    const existing = await prisma.campaign.findFirst({
+      where: { id: args.campaignId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Campaign not found in this organization.");
+
+    return prisma.campaign.update({
+      where: { id: args.campaignId },
+      data: {
+        ...(args.impressions !== undefined ? { impressions: args.impressions } : {}),
+        ...(args.reach !== undefined ? { reach: args.reach } : {}),
+        ...(args.engagement !== undefined ? { engagement: args.engagement } : {}),
+        ...(args.clicks !== undefined ? { clicks: args.clicks } : {}),
+        ...(args.conversions !== undefined ? { conversions: args.conversions } : {}),
+        ...(args.revenue !== undefined ? { revenue: args.revenue } : {}),
+      },
+    });
+  });
+}
+
+async function createContentItem(
+  args: {
+    type: string;
+    title: string;
+    content: string;
+    platform?: string;
+    campaignId?: string;
+    scheduledFor?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "create_content_item", args, () =>
+    prisma.contentItem.create({
+      data: {
+        organizationId: ctx.organizationId,
+        type: args.type.toUpperCase() as ContentType,
+        title: args.title,
+        content: args.content,
+        platform: args.platform,
+        campaignId: args.campaignId,
+        scheduledFor: args.scheduledFor ? new Date(args.scheduledFor) : undefined,
+        status: args.scheduledFor ? "SCHEDULED" : "DRAFT",
+        createdBy: ctx.userId,
+      },
+    })
+  );
+}
+
+async function updateContentItem(
+  args: {
+    contentItemId: string;
+    title?: string;
+    content?: string;
+    platform?: string;
+    scheduledFor?: string;
+    performanceNotes?: string;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "update_content_item", args, async () => {
+    const existing = await prisma.contentItem.findFirst({
+      where: { id: args.contentItemId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Content item not found in this organization.");
+
+    return prisma.contentItem.update({
+      where: { id: args.contentItemId },
+      data: {
+        ...(args.title !== undefined ? { title: args.title } : {}),
+        ...(args.content !== undefined ? { content: args.content } : {}),
+        ...(args.platform !== undefined ? { platform: args.platform } : {}),
+        ...(args.scheduledFor
+          ? { scheduledFor: new Date(args.scheduledFor), status: "SCHEDULED" as ContentStatus }
+          : {}),
+        ...(args.performanceNotes !== undefined ? { performanceNotes: args.performanceNotes } : {}),
+      },
+    });
+  });
+}
+
+async function publishContent(args: { contentItemId: string }, ctx: ExecutorContext) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "publish_content", args, async () => {
+    const existing = await prisma.contentItem.findFirst({
+      where: { id: args.contentItemId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Content item not found in this organization.");
+
+    return prisma.contentItem.update({
+      where: { id: args.contentItemId },
+      data: { status: "PUBLISHED", publishedAt: new Date() },
+    });
+  });
+}
+
+async function createCompetitor(
+  args: { name: string; website?: string; notes?: string },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "create_competitor", args, () =>
+    prisma.competitor.create({ data: { organizationId: ctx.organizationId, ...args } })
+  );
+}
+
+async function updateCompetitor(
+  args: {
+    competitorId: string;
+    website?: string;
+    notes?: string;
+    strengths?: string;
+    weaknesses?: string;
+    markResearched?: boolean;
+  },
+  ctx: ExecutorContext
+) {
+  return withAgentApproval(ctx, ctx.marketingAgentId, "update_competitor", args, async () => {
+    const existing = await prisma.competitor.findFirst({
+      where: { id: args.competitorId, organizationId: ctx.organizationId },
+    });
+    if (!existing) throw new Error("Competitor not found in this organization.");
+
+    return prisma.competitor.update({
+      where: { id: args.competitorId },
+      data: {
+        ...(args.website !== undefined ? { website: args.website } : {}),
+        ...(args.notes !== undefined ? { notes: args.notes } : {}),
+        ...(args.strengths !== undefined ? { strengths: args.strengths } : {}),
+        ...(args.weaknesses !== undefined ? { weaknesses: args.weaknesses } : {}),
+        ...(args.markResearched ? { lastResearchedAt: new Date() } : {}),
+      },
+    });
+  });
+}
+
 async function rememberCeoInsight(
   args: { type: string; content: string; importance?: number },
   ctx: ExecutorContext
@@ -2415,231 +2740,4 @@ async function runGroundedReport(
         {
           role: "user",
           content: `${reportTemplate.content}
-${args.focusArea ? `\nFOCUS AREA REQUESTED BY THE FOUNDER: ${args.focusArea}\nPrioritize this focus area throughout, while still noting any broader information gaps relevant to it.\n` : ""}
-COMPANY CONTEXT:
-${companyContext}
-
-RELEVANT KNOWLEDGE BASE EXCERPTS:
-${knowledgeContext}
-
-RELEVANT CEO MEMORY:
-${memoryContext}
-
-Return ONLY a JSON object shaped exactly like this:
-{
-  "summary": "2-4 sentence executive summary",
-  "sections": [
-    { "title": "string", "sectionType": "SUMMARY|STATUS|GOALS|STRATEGY|KPI|SALES|CUSTOMER|MARKETING|FINANCIAL|OPERATIONAL|RISK|OPPORTUNITY|DECISION|ACTION|DATA_GAP", "content": "string, include FACT/ANALYSIS/INSIGHT/RECOMMENDATION/DATA GAP labels inline where relevant", "priority": 1-5, "sourceRefs": ["string", ...] }
-  ]
-}
-Omit sections with genuinely nothing to say rather than padding with empty content.`,
-        },
-      ],
-    });
-
-    const raw = completion.choices[0]?.message?.content;
-    if (!raw) throw new Error("The model returned no content.");
-
-    let parsed: { summary?: string; sections?: GeneratedReportSection[] };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      throw new Error("The model's response wasn't valid JSON.");
-    }
-
-    const sections = parsed.sections ?? [];
-
-    await prisma.$transaction([
-      prisma.reportSection.createMany({
-        data: sections.map((s, i) => ({
-          reportId: report.id,
-          title: s.title,
-          sectionType: s.sectionType,
-          content: s.content,
-          priority: s.priority ?? 3,
-          sourceRefs: s.sourceRefs ?? [],
-          order: i,
-        })),
-      }),
-      prisma.executiveReport.update({
-        where: { id: report.id },
-        data: { status: "COMPLETED", summary: parsed.summary ?? null },
-      }),
-    ]);
-
-    return {
-      reportId: report.id,
-      title: report.title,
-      summary: parsed.summary,
-      sectionTitles: sections.map((s) => s.title),
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    await prisma.executiveReport.update({
-      where: { id: report.id },
-      data: { status: "FAILED", errorMessage: message },
-    });
-    throw err;
-  }
-}
-
-async function generateExecutiveReport(
-  args: GroundedReportArgs,
-  ctx: ExecutorContext
-) {
-  return runGroundedReport(
-    "executive_report",
-    `Executive Report — ${new Date().toLocaleDateString()}`,
-    args,
-    ctx
-  );
-}
-
-async function generateStrategicPlan(
-  args: GroundedReportArgs,
-  ctx: ExecutorContext
-) {
-  return runGroundedReport(
-    "strategic_planning",
-    `Strategic Plan — ${new Date().toLocaleDateString()}`,
-    args,
-    ctx
-  );
-}
-
-async function generateRiskAnalysis(
-  args: GroundedReportArgs,
-  ctx: ExecutorContext
-) {
-  return runGroundedReport(
-    "risk_analysis",
-    `Risk Analysis — ${new Date().toLocaleDateString()}`,
-    args,
-    ctx
-  );
-}
-
-// ── DISPATCH TABLE ──────────────────────────────────────────────────────
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type ExecutorFn = (args: any, ctx: ExecutorContext) => Promise<unknown>;
-
-export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
-  search_knowledge_base: searchKnowledgeBase,
-  search_web: searchWeb,
-  generate_image: generateImage,
-  edit_image: editImage,
-  list_documents: listDocuments,
-  get_members: getMembers,
-  get_activity_logs: getActivityLogs,
-  get_notifications: getNotifications,
-  get_organization_settings: getOrganizationSettings,
-  list_ceo_memories: listCeoMemories,
-  list_executive_reports: listExecutiveReports,
-  get_executive_report: getExecutiveReport,
-  invite_member: inviteMember,
-  change_member_role: changeMemberRole,
-  initiate_ownership_transfer: initiateOwnershipTransfer,
-  update_organization_name: updateOrganizationName,
-  update_security_settings: updateSecuritySettings,
-  update_notification_settings: updateNotificationSettings,
-  update_profile: updateProfile,
-  create_knowledge_document: createKnowledgeDocument,
-  create_document_draft: createDocumentDraft,
-  update_document_content: updateDocumentContent,
-  delete_knowledge_document: deleteKnowledgeDocument,
-  remember_ceo_insight: rememberCeoInsight,
-  generate_executive_report: generateExecutiveReport,
-  generate_strategic_plan: generateStrategicPlan,
-  generate_risk_analysis: generateRiskAnalysis,
-
-  // Sales Agent / CRM (Phase 7)
-  get_sales_pipeline_summary: getSalesPipelineSummary,
-  get_pipeline_stages: getPipelineStages,
-  list_crm_companies: listCrmCompanies,
-  list_contacts: listContacts,
-  list_leads: listLeads,
-  get_lead: getLead,
-  list_deals: listDeals,
-  get_deal: getDeal,
-  list_sales_tasks: listSalesTasks,
-  list_follow_ups: listFollowUps,
-  list_communication_logs: listCommunicationLogs,
-  create_crm_company: createCrmCompany,
-  update_crm_company: updateCrmCompany,
-  create_contact: createContact,
-  create_lead: createLead,
-  update_lead: updateLead,
-  convert_lead_to_deal: convertLeadToDeal,
-  create_deal: createDeal,
-  update_deal: updateDeal,
-  create_sales_task: createSalesTask,
-  update_sales_task_status: updateSalesTaskStatus,
-  create_follow_up: createFollowUp,
-  complete_follow_up: completeFollowUp,
-  log_communication: logCommunication,
-  delete_lead: deleteLead,
-  qualify_lead: qualifyLead,
-  recommend_next_action: recommendNextAction,
-  draft_outreach_message: draftOutreachMessage,
-  draft_followup_message: draftFollowupMessage,
-  generate_quotation: generateQuotation,
-  generate_proposal: generateProposal,
-  summarize_conversation: summarizeConversation,
-  predict_conversion: predictConversion,
-  analyze_lost_deals: analyzeLostDeals,
-  find_reactivation_candidates: findReactivationCandidates,
-  send_agent_message: sendAgentMessage,
-  list_agent_messages: listAgentMessages,
-};
-
-export async function executeTool(
-  toolName: string,
-  args: unknown,
-  ctx: ExecutorContext
-): Promise<unknown> {
-  const fn = TOOL_EXECUTORS[toolName];
-  if (!fn) throw new Error(`Unknown tool: ${toolName}`);
-
-  assertPermission(toolName, ctx);
-
-  return fn(args, ctx);
-}
-
-export async function buildExecutorContext(): Promise<ExecutorContext> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) throw new Error("Not authenticated");
-
-  const organizationId = await getActiveOrganizationId(user.id);
-  if (!organizationId) throw new Error("No active organization");
-
-  const membership = await prisma.membership.findUnique({
-    where: { userId_organizationId: { userId: user.id, organizationId } },
-    include: { role: true },
-  });
-
-  if (!membership) throw new Error("Not a member of this organization");
-
-  await ensurePromptTemplatesSeeded();
-  const agent = await ensureCeoAgent(organizationId);
-
-  await ensureSalesPromptTemplatesSeeded();
-  const salesAgent = await ensureSalesAgent(organizationId);
-  await ensureDefaultPipelineStages(organizationId);
-
-  await ensureMarketingPromptTemplatesSeeded();
-  const marketingAgent = await ensureMarketingAgent(organizationId);
-
-  return {
-    organizationId,
-    userId: user.id,
-    role: membership.role.key,
-    agentId: agent.id,
-    salesAgentId: salesAgent.id,
-    marketingAgentId: marketingAgent.id,
-  };
-}
+${args.focusArea ? `\nFOCUS AREA REQUESTED BY THE FOUNDER: ${args.focusArea}\
