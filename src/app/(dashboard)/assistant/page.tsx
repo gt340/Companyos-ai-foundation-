@@ -228,6 +228,7 @@ function summarizeResult(tool: string, result: any): string | null {
         `clicks: ${result.clicks}`,
         `conversions: ${result.conversions}`,
         result.revenue !== undefined && result.revenue !== null ? `revenue: ${result.revenue}` : null,
+        result.costToDate !== undefined && result.costToDate !== null ? `cost: ${result.costToDate}` : null,
       ]
         .filter(Boolean)
         .join(" · ");
