@@ -1124,7 +1124,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   },
   {
     name: "update_campaign_metrics",
-    description: "Update a campaign's real recorded performance metrics (impressions, reach, engagement, clicks, conversions, revenue). Only supply values that are actually known — never guess a metric to fill this in. Engagement is a real count, not a percentage.",
+    description: "Update a campaign's real recorded performance metrics (impressions, reach, engagement, clicks, conversions, revenue, and cost). Only supply values that are actually known — never guess a metric to fill this in. Engagement is a real count, not a percentage.",
     mutating: true,
     parameters: {
       type: "object",
@@ -1136,6 +1136,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
         clicks: { type: "number" },
         conversions: { type: "number" },
         revenue: { type: "number" },
+        costToDate: { type: "number", description: "Actual spend so far — needed alongside revenue for ROI to be calculable." },
       },
       required: ["campaignId"],
     },
