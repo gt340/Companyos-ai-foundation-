@@ -173,6 +173,41 @@ enum ContentStatus {
   ARCHIVED
 }
 
+// ── Finance Agent enums (Phase 9) ──
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+// Only meaningful for EXPENSE-type transactions representing a bill
+// owed — drives Accounts Payable without a separate Bill table.
+enum TransactionPaidStatus {
+  UNPAID
+  PAID
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
 // ───────────── Core identity ─────────────
 
 model User {
@@ -210,6 +245,12 @@ model User {
   // Phase 8 — Marketing Agent back-relations
   campaignsCreated    Campaign[]    @relation("CampaignCreatedBy")
   contentItemsCreated ContentItem[] @relation("ContentItemCreatedBy")
+
+  // Phase 9 — Finance Agent back-relations
+  transactionsCreated Transaction[] @relation("TransactionCreatedBy")
+  invoicesCreated     Invoice[]     @relation("InvoiceCreatedBy")
+  paymentsCreated     Payment[]     @relation("PaymentCreatedBy")
+  refundsCreated      Refund[]      @relation("RefundCreatedBy")
 
   @@map("users")
 }
@@ -256,6 +297,17 @@ model Organization {
   contentItems      ContentItem[]
   competitors       Competitor[]
   marketingProfile  MarketingProfile?
+
+  // Phase 9 — Finance Agent back-relations
+  financeAccounts    FinanceAccount[]
+  suppliers          Supplier[]
+  categories         Category[]
+  transactions       Transaction[]
+  invoices           Invoice[]
+  payments           Payment[]
+  refunds            Refund[]
+  budgets            Budget[]
+  approvalThresholds ApprovalThreshold[]
 
   @@index([ownerId])
   @@map("organizations")
@@ -482,8 +534,8 @@ model Agent {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Plain string, not an enum — a future agent type (e.g. "SALES") can be
-  // introduced without a schema migration. "CEO" and, as of Phase 7,
-  // "SALES" are the app-created values today.
+  // introduced without a schema migration. "CEO", "SALES", "MARKETING",
+  // and "FINANCE" are the app-created values today.
   type   String      @default("CEO")
   name   String      @default("CEO Agent")
   status AgentStatus @default(ACTIVE)
@@ -534,7 +586,7 @@ model PromptTemplate {
   name        String
   // e.g. "ceo_system", "executive_report", "executive_analysis",
   // "company_overview", "strategic_planning", "risk_analysis",
-  // "kpi_analysis", "decision_summary", plus Phase 7 sales purposes
+  // "kpi_analysis", "decision_summary", plus Phase 7/8/9 purposes
   purpose     String
   agentType   String  @default("CEO")
   description String?
@@ -619,6 +671,11 @@ model CrmCompany {
   leads    Lead[]
   contacts Contact[]
   deals    Deal[]
+
+  // Phase 9 — Finance Agent back-relations (reused as the customer
+  // reference on invoices/income, instead of a duplicate Customer model)
+  transactions Transaction[]
+  invoices     Invoice[]
 
   @@index([organizationId])
   @@map("crm_companies")
@@ -1018,3 +1075,249 @@ model MarketingProfile {
   @@map("marketing_profiles")
 }
 
+// ═════════════════════════════════════════════════════════
+// Finance Agent (Phase 9)
+// Reuses RoleKey (OWNER/ADMIN/MEMBER/VIEWER) for approval
+// tiers instead of a parallel role concept, and CrmCompany
+// as the customer reference on invoices/income transactions
+// instead of a duplicate Customer model. Reuses Agent/
+// AgentMemory/PromptTemplate/ApprovalRequest/AgentActionLog
+// as-is — no changes to those models in this phase.
+//
+// Approval flow differs from Sales/Marketing: money-moving
+// tools check ApprovalThreshold against the amount and the
+// confirming user's role. If the confirming user's role
+// doesn't meet the threshold's requiredRole, the action is
+// saved as PENDING_APPROVAL (not executed) until someone
+// with the right role explicitly approves it — the real
+// "right person confirms" mechanism the safety rule requires.
+// ═════════════════════════════════════════════════════════
+
+model FinanceAccount {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name           String
+  type           String // "bank", "cash", "mobile-money", "other" — free-form
+  currency       String  @default("USD")
+  currentBalance Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@index([organizationId])
+  @@map("finance_accounts")
+}
+
+model Supplier {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name  String
+  email String?
+  phone String?
+  notes String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@index([organizationId])
+  @@map("suppliers")
+}
+
+model Category {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name String
+  type TransactionType
+
+  createdAt DateTime @default(now())
+
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@index([organizationId])
+  @@map("categories")
+}
+
+model Transaction {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  type     TransactionType
+  amount   Decimal         @db.Decimal(14, 2)
+  currency String          @default("USD")
+
+  categoryId String?   @db.Uuid
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  accountId  String?         @db.Uuid
+  account    FinanceAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  description     String?  @db.Text
+  transactionDate DateTime @default(now())
+  taxAmount       Decimal? @db.Decimal(14, 2)
+
+  // Only meaningful for EXPENSE-type transactions representing a bill
+  // owed — this is how Accounts Payable is computed, without a
+  // separate Bill table.
+  dueDate    DateTime?
+  paidStatus TransactionPaidStatus?
+
+  supplierId String?   @db.Uuid
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  // For INCOME transactions tied to a real customer — reuses CrmCompany
+  // rather than a duplicate Customer model.
+  crmCompanyId String?     @db.Uuid
+  crmCompany   CrmCompany? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("TransactionCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, transactionDate])
+  @@index([organizationId, type])
+  @@map("transactions")
+}
+
+model Invoice {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  invoiceNumber String
+
+  // Reuses CrmCompany as the customer reference; customerName is a
+  // free-text fallback for anyone not already in the CRM.
+  crmCompanyId String?     @db.Uuid
+  crmCompany   CrmCompany? @relation(fields: [crmCompanyId], references: [id], onDelete: SetNull)
+  customerName String?
+
+  issueDate DateTime      @default(now())
+  dueDate   DateTime?
+  status    InvoiceStatus @default(DRAFT)
+
+  subtotal    Decimal  @default(0) @db.Decimal(14, 2)
+  taxAmount   Decimal? @default(0) @db.Decimal(14, 2)
+  totalAmount Decimal  @default(0) @db.Decimal(14, 2)
+  currency    String   @default("USD")
+  notes       String?  @db.Text
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("InvoiceCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+  refunds  Refund[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@map("invoices")
+}
+
+model Payment {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  invoiceId String?  @db.Uuid
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  amount    Decimal          @db.Decimal(14, 2)
+  currency  String           @default("USD")
+  method    String? // "bank transfer", "card", "cash", "mobile money", etc. — free-form
+  direction PaymentDirection
+  status    PaymentStatus    @default(PENDING)
+  paidAt    DateTime?
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("PaymentCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refunds Refund[]
+
+  @@index([organizationId])
+  @@index([invoiceId])
+  @@map("payments")
+}
+
+model Refund {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  paymentId String?  @db.Uuid
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  invoiceId String?  @db.Uuid
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  amount     Decimal   @db.Decimal(14, 2)
+  reason     String?   @db.Text
+  refundedAt DateTime?
+
+  createdBy     String? @db.Uuid
+  createdByUser User?   @relation("RefundCreatedBy", fields: [createdBy], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("refunds")
+}
+
+model Budget {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  categoryId String?   @db.Uuid // null = org-wide budget for the period
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  period         String // e.g. "2026-01" or "2026-Q1"
+  amountBudgeted Decimal @db.Decimal(14, 2)
+  currency       String  @default("USD")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, period])
+  @@map("budgets")
+}
+
+// The configurable approval-tier rule engine itself — reuses RoleKey
+// rather than a parallel role concept. A real table, not hardcoded
+// logic, so thresholds can be changed without a code change.
+model ApprovalThreshold {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  actionType   String   @default("payment") // "payment", "refund", "expense", "invoice", etc.
+  currency     String   @default("USD")
+  minAmount    Decimal  @default(0) @db.Decimal(14, 2)
+  maxAmount    Decimal? @db.Decimal(14, 2) // null = no upper bound
+  requiredRole RoleKey
+  autoApprove  Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, actionType])
+  @@map("approval_thresholds")
+}
