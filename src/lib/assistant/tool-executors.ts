@@ -25,6 +25,7 @@ interface ExecutorContext {
   agentId: string; // this organization's CEO Agent record
   salesAgentId: string; // this organization's Sales Agent record (Phase 7)
   marketingAgentId: string; // this organization's Marketing Agent record (Phase 8, identity only — no tools use it yet)
+  financeAgentId: string; // this organization's Finance Agent record (Phase 9, identity only — no tools use it yet)
   // Populated by the chat route (only for the current turn) when the
   // user's latest message includes an attached image — used by
   // edit_image. Not present when called from the execute-action route.
@@ -415,6 +416,157 @@ async function ensureMarketingAgent(organizationId: string) {
     where: { organizationId_type: { organizationId, type: "MARKETING" } },
     update: {},
     create: { organizationId, type: "MARKETING", name: "Marketing Agent" },
+  });
+}
+
+// ── Finance Agent foundation (Phase 9) ──────────────────────────────────
+// Identity + prompt templates + default approval thresholds ONLY this
+// phase — no transaction/invoice/payment tools yet, no dashboard, no
+// chat-visible capability. financeAgentId is wired into ExecutorContext
+// below so a future phase's tools have somewhere real to point.
+//
+// The Finance Agent must NEVER invent financial numbers — every template
+// below enforces that grounding explicitly, and the approval thresholds
+// seeded here are the real mechanism behind the safety rule: any future
+// money-moving tool must check these before acting, and defer to a
+// person with the required role rather than executing on its own.
+
+const FINANCE_PROMPT_TEMPLATES: {
+  purpose: string;
+  name: string;
+  description: string;
+  content: string;
+}[] = [
+  {
+    purpose: "finance_system",
+    name: "Finance Agent System Prompt",
+    description: "Core identity and ground rules for the Finance Agent.",
+    content:
+      "You are the Finance Agent — an AI employee of this company responsible for revenue, expense, invoice, payment, and cash-flow tracking, operating inside CompanyOS AI. You must NEVER invent a financial figure — every number you state must come from an actual recorded Transaction, Invoice, Payment, Refund, Budget, or FinanceAccount, or from information the user has explicitly and verifiably provided in this conversation. When a figure isn't recorded, say so plainly as a gap rather than estimating, rounding to a 'plausible' number, or inferring one from unrelated data. You must NOT independently transfer money, withdraw money, change bank details, approve large payments, submit tax filings, delete financial records, or perform any other irreversible financial action — these always require explicit authorization through the company's configured approval system (ApprovalThreshold rules), never just your own judgment. Think and communicate like a careful, honest finance controller: precise, conservative about claims, and always clear about what is fact versus analysis.",
+  },
+  {
+    purpose: "expense_analysis",
+    name: "Expense Analysis Prompt",
+    description: "Grounded analysis of recorded expenses.",
+    content:
+      "Analyze the provided expense transactions using only what is actually recorded (amount, category, date, supplier, description). Identify real patterns only if the data actually supports them — do not speculate about spending you have no record of. If a category or time period has no recorded expenses, say so rather than assuming none occurred.",
+  },
+  {
+    purpose: "spending_trends",
+    name: "Spending Trends Prompt",
+    description: "Grounded identification of spending trends over time.",
+    content:
+      "Identify spending trends using only the actual recorded transaction history provided (grouped by category, date, or supplier as given). Distinguish a real trend (a consistent pattern across multiple actual data points) from a single transaction — never characterize one data point as a 'trend'. State plainly when there isn't enough recorded history to identify a meaningful trend.",
+  },
+  {
+    purpose: "cash_flow_forecast",
+    name: "Cash Flow Forecast Prompt",
+    description: "Grounded cash-flow forecasting from real recorded data only.",
+    content:
+      "Forecast cash flow using only real recorded data: actual account balances, actual recorded income/expense transactions, actual outstanding invoices and their due dates, and actual unpaid bills. Never invent a future revenue or expense figure that wasn't actually planned or recorded (e.g. a recurring transaction pattern, a budgeted amount, or a real invoice due date) — if the data available isn't sufficient to forecast reliably, say so explicitly rather than producing a confident-sounding number from insufficient information.",
+  },
+  {
+    purpose: "profitability_analysis",
+    name: "Profitability Analysis Prompt",
+    description: "Grounded profit analysis from real recorded revenue and expenses.",
+    content:
+      "Analyze profitability (gross profit, net profit) using only actual recorded income and expense transactions for the period in question. Compute figures directly from the real data provided — never estimate a missing revenue or cost figure to complete the picture. If costs of goods sold aren't distinguished from other expenses in the data, say so rather than guessing a split.",
+  },
+  {
+    purpose: "revenue_comparison",
+    name: "Revenue Comparison Prompt",
+    description: "Grounded comparison of revenue across periods.",
+    content:
+      "Compare revenue across the requested periods using only actual recorded income transactions for each period. State the real numbers and the real percentage change computed from them. If one of the periods has no recorded data, say so explicitly rather than assuming zero or estimating a figure.",
+  },
+  {
+    purpose: "overdue_invoices_analysis",
+    name: "Overdue Invoices Analysis Prompt",
+    description: "Grounded identification of overdue invoices.",
+    content:
+      "Identify overdue invoices using only actual recorded Invoice due dates and statuses — an invoice is overdue only if its real recorded dueDate has passed and its status isn't PAID or CANCELLED. Never estimate how much a customer 'likely' owes beyond what's actually recorded on real invoices.",
+  },
+  {
+    purpose: "cost_reduction_recommendations",
+    name: "Cost Reduction Recommendations Prompt",
+    description: "Grounded cost-reduction recommendations from real spending data.",
+    content:
+      "Recommend potential cost reductions based only on actual recorded expense transactions and categories. Ground every recommendation in a real spending pattern you can point to in the provided data — never suggest cutting a cost category that has no actual recorded spending, and never invent a percentage savings figure that isn't computed from real numbers.",
+  },
+  {
+    purpose: "financial_report",
+    name: "Financial Report Prompt",
+    description: "Structured financial report generation (daily, weekly, monthly, cash-flow, profit, expense, or outstanding-invoice reports).",
+    content:
+      "Generate a structured financial report of the requested type (daily, weekly, monthly, cash-flow, profit, expense, or outstanding-invoice) using only real data actually provided: actual Transaction, Invoice, Payment, Refund, Budget, and FinanceAccount records for the relevant period. Label each piece of content as FACT (a real recorded figure), ANALYSIS (your reasoning connecting facts), INSIGHT (a non-obvious observation), RECOMMENDATION (a suggested action), or DATA GAP (something relevant that isn't recorded). Never fabricate revenue, expense, profit, cash balance, or any other financial figure. State plainly when a whole section has no real data to report rather than filling it with a plausible-sounding placeholder.",
+  },
+];
+
+async function ensureFinancePromptTemplatesSeeded() {
+  const count = await prisma.promptTemplate.count({ where: { agentType: "FINANCE" } });
+  if (count >= FINANCE_PROMPT_TEMPLATES.length) return;
+
+  for (const t of FINANCE_PROMPT_TEMPLATES) {
+    await prisma.promptTemplate.upsert({
+      where: {
+        purpose_agentType_version: { purpose: t.purpose, agentType: "FINANCE", version: 1 },
+      },
+      update: {},
+      create: {
+        name: t.name,
+        purpose: t.purpose,
+        agentType: "FINANCE",
+        description: t.description,
+        content: t.content,
+        version: 1,
+        isActive: true,
+      },
+    });
+  }
+}
+
+async function ensureFinanceAgent(organizationId: string) {
+  return prisma.agent.upsert({
+    where: { organizationId_type: { organizationId, type: "FINANCE" } },
+    update: {},
+    create: { organizationId, type: "FINANCE", name: "Finance Agent" },
+  });
+}
+
+// Default approval-tier configuration, matching the example thresholds
+// from the spec exactly. Seeded once per org under actionType "payment";
+// a future tool's threshold lookup should fall back to these "payment"
+// rows when no more specific actionType rule exists, so seeding stays
+// minimal while still covering payments, refunds, and expense approvals
+// out of the box. Companies can edit/add rows later — this is real
+// configuration, not hardcoded logic.
+const DEFAULT_APPROVAL_THRESHOLDS: {
+  minAmount: number;
+  maxAmount: number | null;
+  requiredRole: RoleKey;
+  autoApprove: boolean;
+}[] = [
+  { minAmount: 0, maxAmount: 500, requiredRole: "MEMBER", autoApprove: true },
+  { minAmount: 500, maxAmount: 5000, requiredRole: "ADMIN", autoApprove: false },
+  { minAmount: 5000, maxAmount: null, requiredRole: "OWNER", autoApprove: false },
+];
+
+async function ensureDefaultApprovalThresholds(organizationId: string) {
+  const count = await prisma.approvalThreshold.count({
+    where: { organizationId, actionType: "payment" },
+  });
+  if (count > 0) return;
+
+  await prisma.approvalThreshold.createMany({
+    data: DEFAULT_APPROVAL_THRESHOLDS.map((t) => ({
+      organizationId,
+      actionType: "payment",
+      currency: "USD",
+      minAmount: t.minAmount,
+      maxAmount: t.maxAmount,
+      requiredRole: t.requiredRole,
+      autoApprove: t.autoApprove,
+    })),
   });
 }
 
@@ -3343,6 +3495,10 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
   await ensureMarketingPromptTemplatesSeeded();
   const marketingAgent = await ensureMarketingAgent(organizationId);
 
+  await ensureFinancePromptTemplatesSeeded();
+  const financeAgent = await ensureFinanceAgent(organizationId);
+  await ensureDefaultApprovalThresholds(organizationId);
+
   return {
     organizationId,
     userId: user.id,
@@ -3350,5 +3506,6 @@ export async function buildExecutorContext(): Promise<ExecutorContext> {
     agentId: agent.id,
     salesAgentId: salesAgent.id,
     marketingAgentId: marketingAgent.id,
+    financeAgentId: financeAgent.id,
   };
 }
