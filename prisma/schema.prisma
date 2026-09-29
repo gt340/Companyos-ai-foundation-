@@ -252,6 +252,9 @@ model User {
   paymentsCreated     Payment[]     @relation("PaymentCreatedBy")
   refundsCreated      Refund[]      @relation("RefundCreatedBy")
 
+  // Phase 10 — Google integrations (personal connection, one per user)
+  googleConnection GoogleConnection?
+
   @@map("users")
 }
 
@@ -1320,4 +1323,30 @@ model ApprovalThreshold {
 
   @@index([organizationId, actionType])
   @@map("approval_thresholds")
+}
+
+// ═════════════════════════════════════════════════════════
+// Google integrations (Phase 10)
+// Personal connection, one per app user (not per organization) —
+// Gmail/Calendar/Drive are tied to an individual's own Google
+// identity. Tokens are stored so a future tool can always get a
+// valid access token (refreshing it first if expired) without
+// the user re-authenticating every time.
+// ═════════════════════════════════════════════════════════
+
+model GoogleConnection {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  connectedEmail String // which Google account this is, for display in the UI
+  accessToken    String   @db.Text
+  refreshToken   String   @db.Text
+  scopes         String[] @default([])
+  expiresAt      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("google_connections")
 }
