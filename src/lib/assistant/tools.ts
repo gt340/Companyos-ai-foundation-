@@ -1301,6 +1301,73 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       },
     },
   },
+
+  // ── GOOGLE INTEGRATIONS — GMAIL + CALENDAR ──────────────────────────
+  // Real OAuth-backed tools — only work once the user has connected their
+  // Google account at /integrations. Gmail/Calendar are personal to that
+  // connected account, not organization data.
+
+  {
+    name: "list_emails",
+    description: "List the user's recent Gmail messages (subject, sender, date, snippet), optionally filtered by a Gmail search query. Requires the user to have connected their Google account at /integrations — if not connected, this will say so clearly rather than failing silently.",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional Gmail search query, e.g. 'from:someone@example.com', 'is:unread', 'subject:invoice'." },
+        maxResults: { type: "number", description: "Max results. Defaults to 10." },
+      },
+    },
+  },
+  {
+    name: "send_email",
+    description: "Send a real email via the user's connected Gmail account. This is a real external action and always requires explicit confirmation before it takes effect.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient email address." },
+        subject: { type: "string" },
+        body: { type: "string", description: "Plain-text email body." },
+        cc: { type: "string", description: "Optional CC address." },
+      },
+      required: ["to", "subject", "body"],
+    },
+  },
+  {
+    name: "list_calendar_events",
+    description: "List the user's upcoming Google Calendar events (from their primary calendar).",
+    mutating: false,
+    parameters: {
+      type: "object",
+      properties: {
+        timeMin: { type: "string", description: "ISO datetime to start from. Defaults to now." },
+        timeMax: { type: "string", description: "Optional ISO datetime to end at." },
+        maxResults: { type: "number", description: "Max results. Defaults to 10." },
+      },
+    },
+  },
+  {
+    name: "create_calendar_event",
+    description: "Create a real event on the user's primary Google Calendar. This is a real external action and always requires explicit confirmation before it takes effect.",
+    mutating: true,
+    parameters: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Event title." },
+        startDateTime: { type: "string", description: "ISO datetime, e.g. '2026-10-05T14:00:00'." },
+        endDateTime: { type: "string", description: "ISO datetime." },
+        timeZone: { type: "string", description: "IANA timezone, e.g. 'America/New_York'. Defaults to UTC." },
+        description: { type: "string" },
+        location: { type: "string" },
+        attendeeEmails: {
+          type: "array",
+          description: "Optional list of attendee email addresses to invite.",
+        },
+      },
+      required: ["summary", "startDateTime", "endDateTime"],
+    },
+  },
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
