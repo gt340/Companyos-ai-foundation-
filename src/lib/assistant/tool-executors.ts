@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl, cleanText } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
+import { GOOGLE_TOOL_EXECUTORS } from "@/lib/google/gmail-calendar-tools";
 import type { RoleKey, MemoryType, LeadStatus, DealStatus, SalesTaskStatus, CommunicationChannel, CampaignStatus, ContentType, ContentStatus } from "@prisma/client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
@@ -3452,6 +3453,12 @@ export const TOOL_EXECUTORS: Record<string, ExecutorFn> = {
   analyze_competitor: analyzeCompetitor,
   analyze_marketing_performance: analyzeMarketingPerformance,
   generate_marketing_report: generateMarketingReport,
+
+  // Google integrations (Phase 10) — Gmail + Calendar, merged in from
+  // their own file rather than defined here, to keep this file from
+  // growing further. Each function only needs ctx.userId, which
+  // ExecutorContext already structurally satisfies.
+  ...GOOGLE_TOOL_EXECUTORS,
 };
 
 export async function executeTool(
