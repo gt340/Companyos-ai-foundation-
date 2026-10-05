@@ -126,6 +126,10 @@ function describeAction(tool: string, args: Record<string, unknown>): string {
       return "Update competitor research";
     case "generate_marketing_report":
       return `Generate a marketing report${args.title ? ` titled "${args.title}"` : ""}`;
+    case "send_email":
+      return `Send an email to ${args.to}: "${args.subject}"`;
+    case "create_calendar_event":
+      return `Create calendar event "${args.summary}"`;
     default:
       return `Run ${tool}`;
   }
@@ -243,6 +247,14 @@ function summarizeResult(tool: string, result: any): string | null {
     case "create_competitor":
     case "update_competitor":
       return [result.name, result.website, result.notes].filter(Boolean).join(" · ") || null;
+
+    case "send_email":
+      return `Sent to ${result.to}: "${result.subject}"`;
+
+    case "create_calendar_event":
+      return [result.summary, result.start ? `starts: ${new Date(result.start).toLocaleString()}` : null]
+        .filter(Boolean)
+        .join(" · ");
 
     default:
       return null;
