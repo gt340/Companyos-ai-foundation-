@@ -19,8 +19,17 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
-const APP_BASE_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://companyos-ai-foundation.vercel.app";
+// NEXT_PUBLIC_APP_URL may be set in Vercel without a scheme (e.g. just
+// "companyos-ai-foundation.vercel.app") — Google rejects a redirect_uri
+// with no scheme outright as an "invalid_request", before even checking
+// if it matches what's registered. Normalize defensively here rather
+// than trusting the env var's exact format.
+function resolveAppBaseUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_APP_URL ?? "https://companyos-ai-foundation.vercel.app";
+  return raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+}
+
+const APP_BASE_URL = resolveAppBaseUrl();
 
 export async function GET() {
   const supabase = await createClient();
