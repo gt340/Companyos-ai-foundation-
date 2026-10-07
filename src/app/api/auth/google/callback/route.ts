@@ -6,8 +6,17 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-const APP_BASE_URL =
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://companyos-ai-foundation.vercel.app";
+// NEXT_PUBLIC_APP_URL may be set in Vercel without a scheme (e.g. just
+// "companyos-ai-foundation.vercel.app") — Google rejects a redirect_uri
+// with no scheme outright as an "invalid_request". Normalize defensively
+// rather than trusting the env var's exact format. Must produce the
+// identical string the /connect route used, since Google compares them.
+function resolveAppBaseUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_APP_URL ?? "https://companyos-ai-foundation.vercel.app";
+  return raw.startsWith("http://") || raw.startsWith("https://") ? raw : `https://${raw}`;
+}
+
+const APP_BASE_URL = resolveAppBaseUrl();
 
 function redirectToIntegrations(status: "connected" | "disconnected" | "error", message?: string) {
   const target = new URL(`${APP_BASE_URL}/integrations`);
