@@ -18,7 +18,19 @@ interface MinimalCtx {
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const DEFAULT_MAX_CHARS = 20000;
 const HARD_MAX_CHARS = 50000;
-const MAX_DOWNLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_TEXT_DOWNLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_BINARY_DOWNLOAD_BYTES = 10 * 1024 * 1024;
+
+const GOOGLE_DOC = "application/vnd.google-apps.document";
+const GOOGLE_SLIDES = "application/vnd.google-apps.presentation";
+const GOOGLE_SHEET = "application/vnd.google-apps.spreadsheet";
+const MIME_PDF = "application/pdf";
+const MIME_DOCX =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const MIME_XLSX =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const MIME_PPTX =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 async function requireGoogleToken(userId: string): Promise<string> {
   const token = await getValidGoogleAccessToken(userId);
@@ -36,7 +48,7 @@ async function driveError(res: Response, fallback: string): Promise<Error> {
     const data = await res.json();
     message = data?.error?.message ?? fallback;
   } catch {
-    // response body was not JSON — keep the fallback message
+    // response body was not JSON - keep the fallback message
   }
   if (
     res.status === 403 &&
@@ -53,7 +65,7 @@ function escapeDriveQueryValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-// ── LIST / SEARCH ────────────────────────────────────────────────────
+// -- LIST / SEARCH ------------------------------------------------------
 
 async function listDriveFiles(
   args: { searchText?: string; maxResults?: number },
@@ -106,7 +118,54 @@ async function listDriveFiles(
   return { files, count: files.length };
 }
 
-// ── READ ─────────────────────────────────────────────────────────────
+// -- READ ---------------------------------------------------------------
+
+type BinaryKind = "pdf" | "word" | "excel" | "powerpoint";
+
+function binaryKindFor(mime: string): BinaryKind | null {
+  switch (mime) {
+    case MIME_PDF:
+      return "pdf";
+    case MIME_DOCX:
+      return "word";
+    case MIME_XLSX:
+      return "excel";
+    case MIME_PPTX:
+      return "powerpoint";
+    default:
+      return null;
+  }
+}
+
+async function fetchText(
+  url: string,
+  headers: Record<string, string>,
+  fallback: string
+): Promise<string> {
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw await driveError(res, fallback);
+  return res.text();
+}
+
+// Reuses the same extractors the Knowledge Base upload pipeline uses.
+// Imported lazily so a problem loading these libraries can never affect
+// the rest of the assistant, only reading binary Drive files.
+async function extractBinary(kind: BinaryKind, buffer: Buffer): Promise<string> {
+  const extract = await import("../knowledge/extract-text");
+  const result =
+    kind === "pdf"
+      ? await extract.extractFromPdf(buffer)
+      : kind === "word"
+        ? await extract.extractFromWord(buffer)
+        : kind === "excel"
+          ? await extract.extractFromExcel(buffer)
+          : await extract.extractFromPowerPoint(buffer);
+
+  if ("error" in result) {
+    throw new Error(`Could not read that file's contents: ${result.error}`);
+  }
+  return extract.cleanText(result.text);
+}
 
 async function readDriveFile(
   args: { fileId: string; maxChars?: number },
@@ -127,51 +186,74 @@ async function readDriveFile(
   if (!metaRes.ok) throw await driveError(metaRes, "Could not find that Drive file.");
   const meta = await metaRes.json();
   const mime: string = meta.mimeType;
+  const sizeBytes = meta.size ? Number(meta.size) : null;
 
-  let contentRes: Response;
-  if (mime === "application/vnd.google-apps.document") {
-    contentRes = await fetch(
+  let fullText: string;
+  let note: string | undefined;
+
+  if (mime === GOOGLE_DOC || mime === GOOGLE_SLIDES) {
+    fullText = await fetchText(
       `${DRIVE_API}/files/${fileId}/export?mimeType=text/plain`,
-      { headers }
+      headers,
+      "Failed to read that Drive file."
     );
-  } else if (mime === "application/vnd.google-apps.presentation") {
-    contentRes = await fetch(
-      `${DRIVE_API}/files/${fileId}/export?mimeType=text/plain`,
-      { headers }
-    );
-  } else if (mime === "application/vnd.google-apps.spreadsheet") {
+  } else if (mime === GOOGLE_SHEET) {
     // CSV export only returns the first sheet.
-    contentRes = await fetch(
+    fullText = await fetchText(
       `${DRIVE_API}/files/${fileId}/export?mimeType=text/csv`,
-      { headers }
+      headers,
+      "Failed to read that Drive file."
     );
+    note = "Only the first sheet of this spreadsheet is included.";
   } else if (
     mime.startsWith("text/") ||
     mime === "application/json" ||
     mime === "application/xml"
   ) {
-    if (meta.size && Number(meta.size) > MAX_DOWNLOAD_BYTES) {
+    if (sizeBytes !== null && sizeBytes > MAX_TEXT_DOWNLOAD_BYTES) {
       throw new Error(
-        `This file is too large to read here (${meta.size} bytes; limit ${MAX_DOWNLOAD_BYTES}).`
+        `This file is too large to read here (${sizeBytes} bytes; limit ${MAX_TEXT_DOWNLOAD_BYTES}).`
       );
     }
-    contentRes = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, { headers });
+    fullText = await fetchText(
+      `${DRIVE_API}/files/${fileId}?alt=media`,
+      headers,
+      "Failed to read that Drive file."
+    );
   } else {
-    return {
-      id: meta.id,
-      name: meta.name,
-      mimeType: mime,
-      link: meta.webViewLink ?? null,
-      readable: false,
-      note: "This file type can't be read as text here (for example PDFs, Word files, images, or folders). Open it via the link, or upload it to the Knowledge Base to make it searchable.",
-    };
+    const kind = binaryKindFor(mime);
+    if (!kind) {
+      return {
+        id: meta.id,
+        name: meta.name,
+        mimeType: mime,
+        link: meta.webViewLink ?? null,
+        readable: false,
+        note: "This file type can't be read as text here (supported: Google Docs, Sheets, Slides, PDF, Word .docx, Excel .xlsx, PowerPoint .pptx, and plain-text files). Older .doc/.xls/.ppt files, images, and folders are not supported. Open it via the link, or convert it to a Google Doc.",
+      };
+    }
+    if (sizeBytes !== null && sizeBytes > MAX_BINARY_DOWNLOAD_BYTES) {
+      throw new Error(
+        `This file is too large to read here (${sizeBytes} bytes; limit ${MAX_BINARY_DOWNLOAD_BYTES}).`
+      );
+    }
+    const fileRes = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, { headers });
+    if (!fileRes.ok) throw await driveError(fileRes, "Failed to download that Drive file.");
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+    fullText = await extractBinary(kind, buffer);
+
+    if (kind === "pdf" && fullText.trim() === "") {
+      return {
+        id: meta.id,
+        name: meta.name,
+        mimeType: mime,
+        link: meta.webViewLink ?? null,
+        readable: false,
+        note: "This PDF has no extractable text (it is probably a scan or image-only PDF), so it can't be read here.",
+      };
+    }
   }
 
-  if (!contentRes.ok) {
-    throw await driveError(contentRes, "Failed to read that Drive file.");
-  }
-
-  const fullText = await contentRes.text();
   const truncated = fullText.length > maxChars;
 
   return {
@@ -184,9 +266,7 @@ async function readDriveFile(
     truncated,
     totalChars: fullText.length,
     content: truncated ? fullText.slice(0, maxChars) : fullText,
-    ...(mime === "application/vnd.google-apps.spreadsheet"
-      ? { note: "Only the first sheet of this spreadsheet is included." }
-      : {}),
+    ...(note ? { note } : {}),
   };
 }
 
@@ -203,7 +283,7 @@ export const DRIVE_TOOL_DEFINITIONS: AssistantTool[] = [
   {
     name: "list_drive_files",
     description:
-      "List or search the user's Google Drive files (name, type, last modified, link), most recently modified first. Pass searchText to search by file name or file contents; omit it to see the latest files. Returns file IDs that can be passed to read_drive_file. Requires the user to have connected their Google account at /integrations. Read-only, so it runs immediately without confirmation.",
+      "List or search the user's Google Drive files (name, type, last modified, link), most recently modified first. Pass searchText to search by file name or file contents; omit it to see the latest files. Returns file IDs that can be passed to read_drive_file. Call this immediately whenever the user asks about their Drive files - do not tell the user to connect their account first; only report that if this tool itself returns a not-connected error. Read-only, so it runs immediately without confirmation.",
     mutating: false,
     parameters: {
       type: "object",
@@ -223,7 +303,7 @@ export const DRIVE_TOOL_DEFINITIONS: AssistantTool[] = [
   {
     name: "read_drive_file",
     description:
-      "Read the text content of a Google Drive file by its ID (get IDs from list_drive_files). Works for Google Docs, Google Slides (text), Google Sheets (first sheet as CSV), and plain-text files such as .txt, .md, .csv, and .json. Cannot read PDFs, Word/Excel files, images, or folders — it will say so. Long files are truncated. Read-only, so it runs immediately without confirmation.",
+      "Read the text content of a Google Drive file by its ID (get IDs from list_drive_files; if the user says 'read the first one' after a listing, use the first file's ID from that result). Works for Google Docs, Google Slides, Google Sheets (first sheet as CSV), PDFs with a text layer, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), and plain-text files (.txt, .md, .csv, .json). Cannot read images, scanned PDFs, older .doc/.xls/.ppt files, or folders - it will say so. Long files are truncated. Read-only, so it runs immediately without confirmation.",
     mutating: false,
     parameters: {
       type: "object",
