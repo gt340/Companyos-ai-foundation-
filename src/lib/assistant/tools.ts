@@ -1,5 +1,7 @@
 // src/lib/assistant/tools.ts
 
+import { DRIVE_TOOL_DEFINITIONS } from "../google/drive-tools";
+
 export interface AssistantTool {
   name: string;
   description: string;
@@ -1368,6 +1370,10 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
       required: ["summary", "startDateTime", "endDateTime"],
     },
   },
+
+  // ── GOOGLE INTEGRATIONS — DRIVE (read-only) ─────────────────────────
+  // Definitions live in src/lib/google/drive-tools.ts.
+  ...DRIVE_TOOL_DEFINITIONS,
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
