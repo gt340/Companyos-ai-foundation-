@@ -1,6 +1,7 @@
 // src/lib/assistant/tools.ts
 
 import { DRIVE_TOOL_DEFINITIONS } from "../google/drive-tools";
+import { YOUTUBE_TOOL_DEFINITIONS } from "../google/youtube-tools";
 
 export interface AssistantTool {
   name: string;
@@ -1311,7 +1312,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
 
   {
     name: "list_emails",
-    description: "List the user's recent Gmail messages (subject, sender, date, snippet), optionally filtered by a Gmail search query. Requires the user to have connected their Google account at /integrations — if not connected, this will say so clearly rather than failing silently.",
+    description: "List the user's recent Gmail messages (subject, sender, date, snippet), optionally filtered by a Gmail search query. Call this immediately whenever the user asks about their email — do not tell them to connect their account first; only report that if this tool itself returns a not-connected error.",
     mutating: false,
     parameters: {
       type: "object",
@@ -1338,7 +1339,7 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   },
   {
     name: "list_calendar_events",
-    description: "List the user's upcoming Google Calendar events (from their primary calendar).",
+    description: "List the user's upcoming Google Calendar events (from their primary calendar). Call this immediately whenever the user asks about their calendar or schedule — do not tell them to connect their account first; only report that if this tool itself returns a not-connected error.",
     mutating: false,
     parameters: {
       type: "object",
@@ -1371,9 +1372,11 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
 
-  // ── GOOGLE INTEGRATIONS — DRIVE (read-only) ─────────────────────────
-  // Definitions live in src/lib/google/drive-tools.ts.
+  // ── GOOGLE INTEGRATIONS — DRIVE + YOUTUBE (read-only) ───────────────
+  // Definitions live in src/lib/google/drive-tools.ts and
+  // src/lib/google/youtube-tools.ts.
   ...DRIVE_TOOL_DEFINITIONS,
+  ...YOUTUBE_TOOL_DEFINITIONS,
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
