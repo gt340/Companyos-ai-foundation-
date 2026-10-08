@@ -11,11 +11,16 @@ export const runtime = "nodejs";
 // public listing later requires Google's CASA security assessment for
 // these specific scopes. Not a blocker today (testing mode with
 // manually-added test users works immediately), but a real future cost.
+// YouTube (read-only data + read-only analytics) was added later; an
+// account connected before that must disconnect and reconnect to grant
+// these two scopes.
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/youtube.readonly",
+  "https://www.googleapis.com/auth/yt-analytics.readonly",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
