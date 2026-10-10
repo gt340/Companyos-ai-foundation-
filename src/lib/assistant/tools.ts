@@ -1,7 +1,6 @@
 // src/lib/assistant/tools.ts
 
-import { DRIVE_TOOL_DEFINITIONS } from "../google/drive-tools";
-import { YOUTUBE_TOOL_DEFINITIONS } from "../google/youtube-tools";
+import { INTEGRATION_TOOL_DEFINITIONS } from "../integrations/registry";
 
 export interface AssistantTool {
   name: string;
@@ -1372,11 +1371,10 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
     },
   },
 
-  // ── GOOGLE INTEGRATIONS — DRIVE + YOUTUBE (read-only) ───────────────
-  // Definitions live in src/lib/google/drive-tools.ts and
-  // src/lib/google/youtube-tools.ts.
-  ...DRIVE_TOOL_DEFINITIONS,
-  ...YOUTUBE_TOOL_DEFINITIONS,
+  // ── EXTERNAL INTEGRATIONS (Drive, YouTube, video, meetings) ─────────
+  // Definitions live in their own modules and are gathered in
+  // src/lib/integrations/registry.ts. Add new integrations there.
+  ...INTEGRATION_TOOL_DEFINITIONS,
 ];
 
 export const READ_ONLY_TOOL_NAMES: string[] = ASSISTANT_TOOLS.filter(
