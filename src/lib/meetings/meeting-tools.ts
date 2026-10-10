@@ -3,13 +3,15 @@
 //   - Google Meet: creates a Google Calendar event with a Meet link and emails
 //     the invitations. Uses the user's connected Google account (the calendar
 //     scope was already granted), so no extra setup is needed.
-//   - Zoom: creates, lists, and cancels Zoom meetings using a Zoom
-//     Server-to-Server OAuth app. Zoom is a company-level connection (not
-//     per user), configured with these server environment variables:
-//       ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET
-//     and optionally ZOOM_USER_ID (defaults to "me").
-//     The Zoom app needs these scopes: meeting:write:meeting:admin,
-//     meeting:read:list_meetings:admin, meeting:delete:meeting:admin.
+//   - Zoom: creates, lists, and cancels Zoom meetings on the COMPANY's own Zoom
+//     account. Each company connects its Zoom (owner/admin, at /integrations)
+//     through Zoom's OAuth flow; see src/lib/zoom/zoom-connection.ts. One
+//     company can never act on another company's Zoom.
+//     Optional legacy fallback: if the server variables ZOOM_ACCOUNT_ID,
+//     ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET (a Zoom Server-to-Server app) AND
+//     ZOOM_S2S_ORG_ID are all set, that one company (the one whose id equals
+//     ZOOM_S2S_ORG_ID) may use the Server-to-Server account when it has not
+//     connected its own Zoom. No other company ever uses it.
 //
 // Creating or cancelling a meeting is a real external action, so those tools
 // are MUTATING and always show a Confirm card first.
@@ -20,6 +22,8 @@
 import { randomUUID } from "crypto";
 import type { AssistantTool } from "../assistant/tools";
 import { getValidGoogleAccessToken } from "../google/token";
+import { getActiveOrganizationId } from "@/lib/active-org";
+import { ZOOM_API, getOrgZoomAccessToken } from "@/lib/zoom/zoom-connection";
 
 interface MinimalCtx {
   userId: string;
@@ -116,21 +120,38 @@ async function createGoogleMeet(
 
 // -- ZOOM ----------------------------------------------------------------
 
-const ZOOM_NOT_CONFIGURED =
-  "Zoom is not set up yet. A server admin needs to add ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET (from a Zoom Server-to-Server OAuth app) to the Vercel environment variables.";
+const ZOOM_NOT_CONNECTED =
+  "Zoom is not connected for this company yet. A company owner or admin can connect it at /integrations.";
 
-let cachedZoomToken: { value: string; expiresAt: number } | null = null;
-
-async function getZoomToken(): Promise<string> {
-  const accountId = process.env.ZOOM_ACCOUNT_ID;
-  const clientId = process.env.ZOOM_CLIENT_ID;
-  const clientSecret = process.env.ZOOM_CLIENT_SECRET;
-  if (!accountId || !clientId || !clientSecret) {
-    throw new Error(ZOOM_NOT_CONFIGURED);
+// Which company is this request for? Prefer the executor context if it
+// carries the organization; otherwise use the user's active organization.
+async function resolveOrganizationId(ctx: MinimalCtx): Promise<string | null> {
+  const fromContext = (ctx as MinimalCtx & { organizationId?: string }).organizationId;
+  if (fromContext) return fromContext;
+  try {
+    return await getActiveOrganizationId(ctx.userId);
+  } catch {
+    return null;
   }
+}
 
-  if (cachedZoomToken && cachedZoomToken.expiresAt > Date.now() + 60_000) {
-    return cachedZoomToken.value;
+// -- Legacy Server-to-Server fallback (one designated company only) -------
+
+let cachedS2SToken: { value: string; expiresAt: number } | null = null;
+
+function s2sConfigured(): boolean {
+  return Boolean(
+    process.env.ZOOM_ACCOUNT_ID && process.env.ZOOM_CLIENT_ID && process.env.ZOOM_CLIENT_SECRET
+  );
+}
+
+async function getServerToServerZoomToken(): Promise<string> {
+  const accountId = process.env.ZOOM_ACCOUNT_ID as string;
+  const clientId = process.env.ZOOM_CLIENT_ID as string;
+  const clientSecret = process.env.ZOOM_CLIENT_SECRET as string;
+
+  if (cachedS2SToken && cachedS2SToken.expiresAt > Date.now() + 60_000) {
+    return cachedS2SToken.value;
   }
 
   const res = await fetch(
@@ -150,11 +171,41 @@ async function getZoomToken(): Promise<string> {
     );
   }
 
-  cachedZoomToken = {
+  cachedS2SToken = {
     value: data.access_token,
     expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000,
   };
-  return cachedZoomToken.value;
+  return cachedS2SToken.value;
+}
+
+interface ZoomAuth {
+  token: string;
+  // "me" for a company's own OAuth connection; the configured user for the
+  // legacy Server-to-Server fallback.
+  userPath: string;
+}
+
+async function getZoomAuth(ctx: MinimalCtx): Promise<ZoomAuth> {
+  const organizationId = await resolveOrganizationId(ctx);
+  if (!organizationId) {
+    throw new Error("Could not tell which company this Zoom request is for.");
+  }
+
+  const orgToken = await getOrgZoomAccessToken(organizationId);
+  if (orgToken) return { token: orgToken, userPath: "me" };
+
+  if (
+    process.env.ZOOM_S2S_ORG_ID &&
+    process.env.ZOOM_S2S_ORG_ID === organizationId &&
+    s2sConfigured()
+  ) {
+    return {
+      token: await getServerToServerZoomToken(),
+      userPath: process.env.ZOOM_USER_ID ?? "me",
+    };
+  }
+
+  throw new Error(ZOOM_NOT_CONNECTED);
 }
 
 async function zoomError(res: Response, fallback: string): Promise<Error> {
@@ -167,13 +218,9 @@ async function zoomError(res: Response, fallback: string): Promise<Error> {
   }
   if (res.status === 401 || res.status === 403) {
     message +=
-      " (Check that the Zoom app is activated and has the meeting write, list, and delete scopes.)";
+      " (The Zoom connection may be missing permissions. A company owner or admin can reconnect Zoom at /integrations.)";
   }
   return new Error(message);
-}
-
-function zoomUserId(): string {
-  return process.env.ZOOM_USER_ID ?? "me";
 }
 
 async function createZoomMeeting(
@@ -184,11 +231,9 @@ async function createZoomMeeting(
     timeZone?: string;
     agenda?: string;
   },
-  // ctx is part of the shared executor signature; Zoom is company-level.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   ctx: MinimalCtx
 ) {
-  const token = await getZoomToken();
+  const { token, userPath } = await getZoomAuth(ctx);
 
   const duration = Math.min(
     Math.max(Math.floor(Number(args.durationMinutes) || 30), 5),
@@ -196,31 +241,28 @@ async function createZoomMeeting(
   );
   const timeZone = args.timeZone ?? "UTC";
 
-  const res = await fetch(
-    `https://api.zoom.us/v2/users/${encodeURIComponent(zoomUserId())}/meetings`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+  const res = await fetch(`${ZOOM_API}/users/${encodeURIComponent(userPath)}/meetings`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      topic: args.topic,
+      type: 2, // scheduled meeting
+      start_time: args.startDateTime,
+      duration,
+      timezone: timeZone,
+      agenda: args.agenda ?? "",
+      settings: {
+        waiting_room: true,
+        join_before_host: false,
+        mute_upon_entry: true,
+        host_video: true,
+        participant_video: true,
       },
-      body: JSON.stringify({
-        topic: args.topic,
-        type: 2, // scheduled meeting
-        start_time: args.startDateTime,
-        duration,
-        timezone: timeZone,
-        agenda: args.agenda ?? "",
-        settings: {
-          waiting_room: true,
-          join_before_host: false,
-          mute_upon_entry: true,
-          host_video: true,
-          participant_video: true,
-        },
-      }),
-    }
-  );
+    }),
+  });
   if (!res.ok) throw await zoomError(res, "Failed to create the Zoom meeting.");
   const data: Json = await res.json();
 
@@ -238,12 +280,8 @@ async function createZoomMeeting(
   };
 }
 
-async function listZoomMeetings(
-  args: { maxResults?: number },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  ctx: MinimalCtx
-) {
-  const token = await getZoomToken();
+async function listZoomMeetings(args: { maxResults?: number }, ctx: MinimalCtx) {
+  const { token, userPath } = await getZoomAuth(ctx);
   const pageSize = Math.min(Math.max(Math.floor(Number(args.maxResults) || 10), 1), 30);
 
   const params = new URLSearchParams({
@@ -251,7 +289,7 @@ async function listZoomMeetings(
     page_size: String(pageSize),
   });
   const res = await fetch(
-    `https://api.zoom.us/v2/users/${encodeURIComponent(zoomUserId())}/meetings?${params.toString()}`,
+    `${ZOOM_API}/users/${encodeURIComponent(userPath)}/meetings?${params.toString()}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) throw await zoomError(res, "Failed to list Zoom meetings.");
@@ -272,18 +310,14 @@ async function listZoomMeetings(
   return { meetings, count: meetings.length };
 }
 
-async function deleteZoomMeeting(
-  args: { meetingId: string },
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  ctx: MinimalCtx
-) {
+async function deleteZoomMeeting(args: { meetingId: string }, ctx: MinimalCtx) {
   const meetingId = String(args.meetingId ?? "").trim();
   if (!/^\d{6,15}$/.test(meetingId)) {
     throw new Error("That is not a valid Zoom meeting ID (it should be a number).");
   }
 
-  const token = await getZoomToken();
-  const res = await fetch(`https://api.zoom.us/v2/meetings/${meetingId}`, {
+  const { token } = await getZoomAuth(ctx);
+  const res = await fetch(`${ZOOM_API}/meetings/${meetingId}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -343,7 +377,7 @@ export const MEETING_TOOL_DEFINITIONS: AssistantTool[] = [
   {
     name: "create_zoom_meeting",
     description:
-      "Schedule a Zoom meeting on the company's Zoom account and get the join link. This is a real external action and always requires explicit confirmation before it happens. Agree the topic, date, time, and length with the user first, and ask for their time zone if you do not know it. This does not email anyone: after it is created, offer to send the joinUrl to attendees with send_email. You cannot join or speak in the meeting yourself.",
+      "Schedule a Zoom meeting on the company's own Zoom account and get the join link. This is a real external action and always requires explicit confirmation before it happens. Agree the topic, date, time, and length with the user first, and ask for their time zone if you do not know it. This does not email anyone: after it is created, offer to send the joinUrl to attendees with send_email. If the company has not connected Zoom, the tool says so and a company owner or admin must connect it at /integrations. You cannot join or speak in the meeting yourself.",
     mutating: true,
     parameters: {
       type: "object",
@@ -366,7 +400,7 @@ export const MEETING_TOOL_DEFINITIONS: AssistantTool[] = [
   {
     name: "list_zoom_meetings",
     description:
-      "List the company's upcoming scheduled Zoom meetings (topic, start time, join link, meeting ID). Call this immediately when the user asks about their Zoom meetings. Read-only.",
+      "List the company's upcoming scheduled Zoom meetings (topic, start time, join link, meeting ID). Call this immediately when the user asks about their Zoom meetings; only report that Zoom is not connected if this tool itself says so. Read-only.",
     mutating: false,
     parameters: {
       type: "object",
