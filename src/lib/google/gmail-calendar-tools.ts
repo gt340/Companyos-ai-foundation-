@@ -10,6 +10,7 @@
 import { getValidGoogleAccessToken } from "./token";
 import { DRIVE_TOOL_EXECUTORS } from "./drive-tools";
 import { YOUTUBE_TOOL_EXECUTORS } from "./youtube-tools";
+import { UPLOAD_TOOL_NAMES } from "./youtube-upload";
 
 interface MinimalCtx {
   userId: string;
@@ -232,15 +233,21 @@ export const GOOGLE_TOOL_EXECUTORS: Record<string, GoogleExecutorFn> = {
   create_calendar_event: createCalendarEvent,
   // Read-only Google Drive tools (see drive-tools.ts)
   ...DRIVE_TOOL_EXECUTORS,
-  // Read-only YouTube Data + Analytics tools (see youtube-tools.ts)
+  // YouTube tools, AI video creation, and the confirm-gated YouTube upload
+  // (see youtube-tools.ts, video-tools.ts, youtube-upload.ts)
   ...YOUTUBE_TOOL_EXECUTORS,
 };
 
 // Mirrors TOOL_MIN_ROLES' shape from tool-executors.ts, merged in there.
-// Gmail/Calendar are personal to the connected Google account, not
+// Gmail/Calendar/YouTube are personal to the connected Google account, not
 // org-sensitive the way inviting a member is — no role restriction here,
-// any active member can use their own connected account. send_email and
-// create_calendar_event are still mutating (real external actions), so
-// they go through the existing Confirm-card flow regardless.
-// The Drive and YouTube tools are read-only, so none of them appear here.
-export const GOOGLE_MUTATING_TOOL_NAMES = ["send_email", "create_calendar_event"];
+// any active member can use their own connected account. send_email,
+// create_calendar_event, and upload_youtube_video are mutating (real
+// external actions), so they go through the existing Confirm-card flow
+// regardless. The Drive tools and the other YouTube/video tools are
+// read-only, so none of them appear here.
+export const GOOGLE_MUTATING_TOOL_NAMES = [
+  "send_email",
+  "create_calendar_event",
+  ...UPLOAD_TOOL_NAMES,
+];
