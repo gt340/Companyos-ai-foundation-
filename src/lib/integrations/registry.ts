@@ -1,15 +1,16 @@
 // src/lib/integrations/registry.ts
 // One place that gathers every external-integration tool module (Google
-// Drive, YouTube + video + upload, meetings, ...). To add a new integration:
-// create its tool module, then add its definitions, executors, and (if any)
-// mutating tool names here. tools.ts and gmail-calendar-tools.ts only import
-// from this file, so they do not need to change again.
+// Drive, YouTube + video + upload, AdSense, meetings, ...). To add a new
+// integration: create its tool module, then add its definitions, executors,
+// and (if any) mutating tool names here. tools.ts and gmail-calendar-tools.ts
+// only import from this file, so they do not need to change again.
 //
 // This file imports the tool modules; none of them import it back, and they
 // only import the AssistantTool TYPE from tools.ts (erased at compile time),
 // so there is no circular import.
 
 import type { AssistantTool } from "../assistant/tools";
+import { ADSENSE_TOOL_DEFINITIONS, ADSENSE_TOOL_EXECUTORS } from "../google/adsense-tools";
 import { DRIVE_TOOL_DEFINITIONS, DRIVE_TOOL_EXECUTORS } from "../google/drive-tools";
 import { YOUTUBE_TOOL_DEFINITIONS, YOUTUBE_TOOL_EXECUTORS } from "../google/youtube-tools";
 import { UPLOAD_TOOL_NAMES } from "../google/youtube-upload";
@@ -29,12 +30,14 @@ type IntegrationExecutorFn = (args: any, ctx: MinimalCtx) => Promise<unknown>;
 export const INTEGRATION_TOOL_DEFINITIONS: AssistantTool[] = [
   ...DRIVE_TOOL_DEFINITIONS,
   ...YOUTUBE_TOOL_DEFINITIONS, // includes the Veo video tools and upload_youtube_video
+  ...ADSENSE_TOOL_DEFINITIONS,
   ...MEETING_TOOL_DEFINITIONS,
 ];
 
 export const INTEGRATION_TOOL_EXECUTORS: Record<string, IntegrationExecutorFn> = {
   ...DRIVE_TOOL_EXECUTORS,
   ...YOUTUBE_TOOL_EXECUTORS, // includes the Veo video tools and upload_youtube_video
+  ...ADSENSE_TOOL_EXECUTORS,
   ...MEETING_TOOL_EXECUTORS,
 };
 
