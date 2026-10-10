@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
+import { encryptToken } from "@/lib/security/token-crypto";
 import {
   ZOOM_API,
   ZOOM_TOKEN_URL,
@@ -92,12 +93,13 @@ export async function GET(req: Request) {
     return fail(base, "Connected to Zoom, but could not read the Zoom account details.");
   }
 
+  // Tokens are encrypted before storage once TOKEN_ENCRYPTION_KEY is set.
   const data = {
     connectedByUserId: user.id,
     zoomAccountId: String(me.account_id ?? ""),
     connectedEmail: String(me.email),
-    accessToken: tokens.access_token as string,
-    refreshToken: tokens.refresh_token as string,
+    accessToken: encryptToken(tokens.access_token as string),
+    refreshToken: encryptToken(tokens.refresh_token as string),
     scopes: tokens.scope ? String(tokens.scope).split(" ") : [],
     expiresAt: new Date(Date.now() + Number(tokens.expires_in ?? 3600) * 1000),
   };

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import {
   ZOOM_REVOKE_URL,
   getZoomOAuthConfig,
+  readStoredAccessToken,
   userCanManageZoom,
   zoomAppBaseUrl,
   zoomBasicAuthHeader,
@@ -42,9 +43,10 @@ export async function POST() {
   // Best effort: tell Zoom to revoke the token. The local connection is
   // removed regardless of whether Zoom's revoke call succeeds.
   const config = getZoomOAuthConfig();
-  if (connection && config) {
+  const accessToken = connection ? readStoredAccessToken(connection.accessToken) : null;
+  if (accessToken && config) {
     try {
-      await fetch(`${ZOOM_REVOKE_URL}?${new URLSearchParams({ token: connection.accessToken })}`, {
+      await fetch(`${ZOOM_REVOKE_URL}?${new URLSearchParams({ token: accessToken })}`, {
         method: "POST",
         headers: {
           Authorization: zoomBasicAuthHeader(config.clientId, config.clientSecret),

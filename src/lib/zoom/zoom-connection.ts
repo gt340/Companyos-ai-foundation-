@@ -13,8 +13,12 @@
 //   <app url>/api/auth/zoom/callback
 // App scopes needed: meeting:write:meeting, meeting:read:list_meetings,
 // meeting:delete:meeting, user:read:user
+//
+// Tokens are stored encrypted (see src/lib/security/token-crypto.ts) once
+// TOKEN_ENCRYPTION_KEY is configured.
 
 import { prisma } from "@/lib/prisma";
+import { decryptToken, encryptToken, encryptionEnabled, isEncrypted } from "@/lib/security/token-crypto";
 
 export const ZOOM_AUTHORIZE_URL = "https://zoom.us/oauth/authorize";
 export const ZOOM_TOKEN_URL = "https://zoom.us/oauth/token";
@@ -64,6 +68,17 @@ export async function userCanManageZoom(
   return key === "OWNER" || key === "ADMIN";
 }
 
+const RECONNECT_MESSAGE =
+  "The company's Zoom connection could not be read. A company owner or admin needs to reconnect Zoom at /integrations.";
+
+function openToken(stored: string): string {
+  try {
+    return decryptToken(stored);
+  } catch {
+    throw new Error(RECONNECT_MESSAGE);
+  }
+}
+
 // Returns a valid access token for the organization's Zoom connection,
 // refreshing it first if it is about to expire. Returns null when the
 // organization has not connected Zoom.
@@ -75,8 +90,25 @@ export async function getOrgZoomAccessToken(
   });
   if (!connection) return null;
 
+  const accessToken = openToken(connection.accessToken);
+  const refreshToken = openToken(connection.refreshToken);
+
+  // Upgrade legacy plain-text tokens to encrypted storage (only when a key is set).
+  if (
+    encryptionEnabled() &&
+    (!isEncrypted(connection.accessToken) || !isEncrypted(connection.refreshToken))
+  ) {
+    await prisma.zoomConnection.update({
+      where: { organizationId },
+      data: {
+        accessToken: encryptToken(accessToken),
+        refreshToken: encryptToken(refreshToken),
+      },
+    });
+  }
+
   if (connection.expiresAt.getTime() > Date.now() + 60_000) {
-    return connection.accessToken;
+    return accessToken;
   }
 
   const config = getZoomOAuthConfig();
@@ -94,7 +126,7 @@ export async function getOrgZoomAccessToken(
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",
-      refresh_token: connection.refreshToken,
+      refresh_token: refreshToken,
     }),
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -110,12 +142,22 @@ export async function getOrgZoomAccessToken(
   await prisma.zoomConnection.update({
     where: { organizationId },
     data: {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token ?? connection.refreshToken,
+      accessToken: encryptToken(data.access_token as string),
+      refreshToken: encryptToken((data.refresh_token as string | undefined) ?? refreshToken),
       expiresAt: new Date(Date.now() + Number(data.expires_in ?? 3600) * 1000),
       ...(data.scope ? { scopes: String(data.scope).split(" ") } : {}),
     },
   });
 
   return data.access_token as string;
+}
+
+// Plain-text access token for revoking at Zoom when disconnecting.
+// Returns null if the stored value cannot be read.
+export function readStoredAccessToken(stored: string): string | null {
+  try {
+    return decryptToken(stored);
+  } catch {
+    return null;
+  }
 }
