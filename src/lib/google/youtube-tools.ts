@@ -1,6 +1,8 @@
 // src/lib/google/youtube-tools.ts
 // Read-only YouTube tools: YouTube Data API v3 (channel, videos, comments,
 // search) and YouTube Analytics API (views, watch time, subscribers, etc.).
+// This module also registers the AI video-creation tools from video-tools.ts
+// (Veo), since those are the videos the assistant makes for YouTube.
 //
 // Requirements:
 //  - YouTube Data API v3 and YouTube Analytics API enabled in the Google
@@ -16,6 +18,7 @@
 import type { AssistantTool } from "../assistant/tools";
 import { prisma } from "@/lib/prisma";
 import { getValidGoogleAccessToken } from "./token";
+import { VIDEO_TOOL_DEFINITIONS, VIDEO_TOOL_EXECUTORS } from "./video-tools";
 
 interface MinimalCtx {
   userId: string;
@@ -487,6 +490,8 @@ export const YOUTUBE_TOOL_EXECUTORS: Record<string, YouTubeExecutorFn> = {
   search_youtube_videos: searchYouTubeVideos,
   list_youtube_comments: listYouTubeComments,
   get_youtube_analytics: getYouTubeAnalytics,
+  // AI video creation with Veo (see video-tools.ts)
+  ...VIDEO_TOOL_EXECUTORS,
 };
 
 // All YouTube tools are read-only, so they run immediately with no Confirm card.
@@ -578,4 +583,6 @@ export const YOUTUBE_TOOL_DEFINITIONS: AssistantTool[] = [
       },
     },
   },
+  // AI video creation with Veo (see video-tools.ts)
+  ...VIDEO_TOOL_DEFINITIONS,
 ];
