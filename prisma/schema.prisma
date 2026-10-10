@@ -315,6 +315,10 @@ model Organization {
   // Phase 11 — Zoom integration (one company-level connection per organization)
   zoomConnection ZoomConnection?
 
+  // Phase 12 — AI video generation usage and monthly budget
+  videoGenerationJobs VideoGenerationJob[]
+  videoBudget         VideoBudget?
+
   @@index([ownerId])
   @@map("organizations")
 }
@@ -1382,4 +1386,45 @@ model ZoomConnection {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   @@map("zoom_connections")
+}
+
+// ═════════════════════════════════════════════════════════
+// AI video generation usage + budget (Phase 12)
+// All companies share one Gemini key (the platform pays the bill), so each
+// company gets a monthly dollar budget. One row per video started; spend is
+// the sum of estimatedCostUsd for the current UTC month (status "started" or
+// "ready" — failed/blocked videos are not charged). jobHash is a SHA-256 hash
+// of Google's job id, so no usable Google identifier or prompt text is stored.
+// Created directly in Supabase (RLS enabled, NO policies: server-only).
+// ═════════════════════════════════════════════════════════
+
+model VideoGenerationJob {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  requestedByUserId String? @db.Uuid // FK to users in the database; no relation needed here
+
+  jobHash          String  @unique
+  model            String
+  quality          String
+  durationSeconds  Int
+  estimatedCostUsd Decimal @db.Decimal(10, 2)
+  status           String  @default("started") // started | ready | failed | blocked
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+  @@map("video_generation_jobs")
+}
+
+// Optional per-company override of the default monthly budget.
+model VideoBudget {
+  organizationId  String       @id @db.Uuid
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  monthlyLimitUsd Decimal      @db.Decimal(10, 2)
+  updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
+
+  @@map("video_budgets")
 }
