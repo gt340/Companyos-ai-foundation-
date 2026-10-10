@@ -10,11 +10,15 @@
 //   check_video_status   polls the job; when ready, returns the file id and a
 //                        preview link served by /api/assistant/video
 //
+// This module also registers upload_youtube_video (see youtube-upload.ts),
+// the confirm-gated tool that publishes a generated (or Drive) video.
+//
 // Executors are merged into GOOGLE_TOOL_EXECUTORS via youtube-tools.ts and
 // definitions are spread into ASSISTANT_TOOLS via youtube-tools.ts. The
 // AssistantTool import is type-only, so there is no circular import.
 
 import type { AssistantTool } from "../assistant/tools";
+import { UPLOAD_TOOL_DEFINITIONS, UPLOAD_TOOL_EXECUTORS } from "./youtube-upload";
 
 interface MinimalCtx {
   userId: string;
@@ -238,7 +242,7 @@ async function checkVideoStatus(
     status: "ready",
     fileId,
     previewUrl: `${resolveAppBaseUrl()}/api/assistant/video?f=${fileId}`,
-    note: "The video is ready. Give the user the previewUrl (they must be signed in to the app to open it) and the fileId. Google keeps the file for about 2 days.",
+    note: "The video is ready. Give the user the previewUrl (they must be signed in to the app to open it) and the fileId. Google keeps the file for about 2 days. If they want it on YouTube, offer upload_youtube_video with this fileId as geminiFileId.",
   };
 }
 
@@ -248,12 +252,15 @@ type VideoExecutorFn = (args: any, ctx: MinimalCtx) => Promise<unknown>;
 export const VIDEO_TOOL_EXECUTORS: Record<string, VideoExecutorFn> = {
   generate_video: generateVideo,
   check_video_status: checkVideoStatus,
+  // Confirm-gated YouTube upload (see youtube-upload.ts)
+  ...UPLOAD_TOOL_EXECUTORS,
 };
 
-// Both are marked read-only so they run inline without a Confirm card (the
-// confirm flow cannot carry a job id between turns). Cost control is done in
-// the conversation instead: generate_video refuses to start unless the user
-// has approved the estimated cost.
+// generate_video and check_video_status are marked read-only so they run
+// inline without a Confirm card (the confirm flow cannot carry a job id
+// between turns). Cost control is done in the conversation instead:
+// generate_video refuses to start unless the user has approved the
+// estimated cost.
 export const VIDEO_TOOL_DEFINITIONS: AssistantTool[] = [
   {
     name: "generate_video",
@@ -307,4 +314,6 @@ export const VIDEO_TOOL_DEFINITIONS: AssistantTool[] = [
       required: ["jobId"],
     },
   },
+  // Confirm-gated YouTube upload (see youtube-upload.ts)
+  ...UPLOAD_TOOL_DEFINITIONS,
 ];
