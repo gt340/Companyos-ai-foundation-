@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createClient } from "@/lib/supabase/server";
+import { encryptToken } from "@/lib/security/token-crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -93,20 +94,24 @@ export async function GET(req: Request) {
     const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000);
     const scopes: string[] = ((tokenData.scope as string) ?? "").split(" ").filter(Boolean);
 
+    // Tokens are encrypted before storage once TOKEN_ENCRYPTION_KEY is set.
+    const accessToken = encryptToken(tokenData.access_token as string);
+    const refreshToken = encryptToken(tokenData.refresh_token as string);
+
     await prisma.googleConnection.upsert({
       where: { userId: user.id },
       update: {
         connectedEmail: userInfo.email ?? "unknown",
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
+        accessToken,
+        refreshToken,
         scopes,
         expiresAt,
       },
       create: {
         userId: user.id,
         connectedEmail: userInfo.email ?? "unknown",
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
+        accessToken,
+        refreshToken,
         scopes,
         expiresAt,
       },
