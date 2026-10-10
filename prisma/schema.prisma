@@ -312,6 +312,9 @@ model Organization {
   budgets            Budget[]
   approvalThresholds ApprovalThreshold[]
 
+  // Phase 11 — Zoom integration (one company-level connection per organization)
+  zoomConnection ZoomConnection?
+
   @@index([ownerId])
   @@map("organizations")
 }
@@ -1349,4 +1352,34 @@ model GoogleConnection {
   updatedAt DateTime @updatedAt
 
   @@map("google_connections")
+}
+
+// ═════════════════════════════════════════════════════════
+// Zoom integration (Phase 11)
+// Company-level connection, one per organization — meetings are
+// created on the company's own Zoom account, so one company can
+// never act on another's Zoom. Connected by an owner/admin through
+// Zoom's OAuth flow. Created directly in Supabase (RLS enabled,
+// deliberately NO policies: tokens are only ever read and written
+// server-side through Prisma, never through the public Supabase API).
+// ═════════════════════════════════════════════════════════
+
+model ZoomConnection {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  connectedByUserId String? @db.Uuid // who connected it (FK to users in the database; no relation needed here)
+
+  zoomAccountId  String // Zoom's own account id
+  connectedEmail String // which Zoom user connected it, for display in the UI
+  accessToken    String   @db.Text
+  refreshToken   String   @db.Text
+  scopes         String[] @default([])
+  expiresAt      DateTime @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@map("zoom_connections")
 }
