@@ -1,10 +1,10 @@
 // src/lib/integrations/registry.ts
 // One place that gathers every external-integration tool module (Google
-// Drive, YouTube + video + upload + live streaming, AdSense, meetings, ...).
-// To add a new integration: create its tool module, then add its definitions,
-// executors, and (if any) mutating tool names here. tools.ts and
-// gmail-calendar-tools.ts only import from this file, so they do not need to
-// change again.
+// Drive, YouTube + video + upload + live streaming, AdSense, meetings, AI
+// voices, ...). To add a new integration: create its tool module, then add
+// its definitions, executors, and (if any) mutating tool names here. tools.ts
+// and gmail-calendar-tools.ts only import from this file, so they do not need
+// to change again.
 //
 // This file imports the tool modules; none of them import it back, and they
 // only import the AssistantTool TYPE from tools.ts (erased at compile time),
@@ -25,6 +25,11 @@ import {
   MEETING_TOOL_DEFINITIONS,
   MEETING_TOOL_EXECUTORS,
 } from "../meetings/meeting-tools";
+import {
+  VOICE_MUTATING_TOOL_NAMES,
+  VOICE_TOOL_DEFINITIONS,
+  VOICE_TOOL_EXECUTORS,
+} from "../voice/voice-tools";
 
 interface MinimalCtx {
   userId: string;
@@ -39,6 +44,7 @@ export const INTEGRATION_TOOL_DEFINITIONS: AssistantTool[] = [
   ...LIVE_TOOL_DEFINITIONS,
   ...ADSENSE_TOOL_DEFINITIONS,
   ...MEETING_TOOL_DEFINITIONS,
+  ...VOICE_TOOL_DEFINITIONS,
 ];
 
 export const INTEGRATION_TOOL_EXECUTORS: Record<string, IntegrationExecutorFn> = {
@@ -47,6 +53,7 @@ export const INTEGRATION_TOOL_EXECUTORS: Record<string, IntegrationExecutorFn> =
   ...LIVE_TOOL_EXECUTORS,
   ...ADSENSE_TOOL_EXECUTORS,
   ...MEETING_TOOL_EXECUTORS,
+  ...VOICE_TOOL_EXECUTORS,
 };
 
 // Tools with real external effects: these always go through the Confirm card.
@@ -54,4 +61,5 @@ export const INTEGRATION_MUTATING_TOOL_NAMES: string[] = [
   ...UPLOAD_TOOL_NAMES,
   ...LIVE_MUTATING_TOOL_NAMES,
   ...MEETING_MUTATING_TOOL_NAMES,
+  ...VOICE_MUTATING_TOOL_NAMES,
 ];
