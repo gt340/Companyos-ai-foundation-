@@ -319,6 +319,10 @@ model Organization {
   videoGenerationJobs VideoGenerationJob[]
   videoBudget         VideoBudget?
 
+  // Phase 13 — AI voices (cloned voices and monthly usage)
+  clonedVoices   ClonedVoice[]
+  voiceUsageLogs VoiceUsageLog[]
+
   @@index([ownerId])
   @@map("organizations")
 }
@@ -1427,4 +1431,48 @@ model VideoBudget {
   updatedAt       DateTime     @updatedAt @db.Timestamptz(6)
 
   @@map("video_budgets")
+}
+
+// ═════════════════════════════════════════════════════════
+// AI voices (Phase 13)
+// All companies share one ElevenLabs account (the platform pays), so each
+// cloned voice is recorded against the company that created it (a company
+// can only list and use its own clones), together with a note of where the
+// speaker's written consent is kept. voice_usage_logs counts characters of
+// generated speech per company for a monthly cap; no text is stored.
+// Created directly in Supabase (RLS enabled, NO policies: server-only).
+// ═════════════════════════════════════════════════════════
+
+model ClonedVoice {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdByUserId String? @db.Uuid // FK to users in the database; no relation needed here
+
+  elevenLabsVoiceId  String   @unique
+  speakerName        String
+  consentNote        String   @db.Text
+  consentConfirmedAt DateTime @default(now()) @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@map("cloned_voices")
+}
+
+model VoiceUsageLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  requestedByUserId String? @db.Uuid // FK to users in the database; no relation needed here
+
+  characters Int
+  voiceKind  String // "stock" | "cloned"
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+  @@map("voice_usage_logs")
 }
