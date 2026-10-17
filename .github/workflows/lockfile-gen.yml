@@ -1,0 +1,135 @@
+name: lockfile-gen (temporary)
+
+# TEMPORARY. Lives only on branch tmp/lockfile-gen (never on main).
+# Generates package-lock.json for base commit c462748b and pushes it to
+# chore/add-package-lock only if every integrity check passes.
+on:
+  push:
+    branches:
+      - tmp/lockfile-gen
+    paths:
+      - ".github/workflows/lockfile-gen.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lockfile-gen
+  cancel-in-progress: false
+
+jobs:
+  gen:
+    if: github.repository == 'gt340/Companyos-ai-foundation-' && github.event_name == 'push' && github.ref == 'refs/heads/tmp/lockfile-gen'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout pinned base commit
+        uses: actions/checkout@v4
+        with:
+          ref: c462748b01f395add93fba1c0255a2ebcd1d59c1
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node 24.21.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+
+      - name: Generate and verify lockfile (no token in this step)
+        id: gen
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/result.txt"
+          : > "$R"
+          log() { echo "$*" | tee -a "$R"; }
+          fail() { log "FAIL: $*"; exit 1; }
+
+          BASE=c462748b01f395add93fba1c0255a2ebcd1d59c1
+          LOCK_SHA=af403db3944799021084d05122e68f683eacc26b11dfd82def3db96a439c59ed
+
+          log "node=$(node -v) npm=$(npm -v)"
+          [ "$(node -v)" = "v24.21.0" ] || fail "node is not v24.21.0"
+          if [ "$(npm -v)" != "11.19.0" ]; then
+            npm install -g npm@11.19.0 > "$RUNNER_TEMP/npm-global.log" 2>&1 || fail "could not install npm 11.19.0"
+          fi
+          log "npm=$(npm -v)"
+          [ "$(npm -v)" = "11.19.0" ] || fail "npm is not 11.19.0"
+
+          [ "$(git rev-parse HEAD)" = "$BASE" ] || fail "HEAD is not the pinned base commit"
+          log "base=$BASE"
+          [ ! -e package-lock.json ] || fail "package-lock.json already exists at base"
+          [ -z "$(git status --porcelain)" ] || fail "working tree is not clean before generation"
+          log "package_json_sha256=$(sha256sum package.json | cut -d' ' -f1)"
+
+          npm install --package-lock-only --ignore-scripts > "$RUNNER_TEMP/npm-lock.log" 2>&1 || { tail -20 "$RUNNER_TEMP/npm-lock.log" | tee -a "$R"; fail "npm install --package-lock-only failed"; }
+
+          ACT="$(sha256sum package-lock.json | cut -d' ' -f1)"
+          log "lock_sha256=$ACT"
+          log "lock_bytes=$(wc -c < package-lock.json)"
+          [ "$ACT" = "$LOCK_SHA" ] || fail "lockfile hash differs from validated hash"
+
+          git diff --quiet -- package.json || fail "package.json changed"
+          [ "$(git status --porcelain)" = "?? package-lock.json" ] || fail "unexpected working tree changes"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c chore/add-package-lock
+          git add package-lock.json
+          [ "$(git diff --cached --name-only)" = "package-lock.json" ] || fail "staged files are not exactly package-lock.json"
+          git commit -q -m "chore: add package-lock.json (no dependency changes)"
+          [ "$(git rev-list --count "$BASE"..HEAD)" = "1" ] || fail "branch is not exactly one commit ahead of base"
+          [ "$(git rev-parse HEAD^)" = "$BASE" ] || fail "parent is not the base commit"
+          [ "$(git diff --name-only "$BASE" HEAD)" = "package-lock.json" ] || fail "commit changes files other than package-lock.json"
+          log "commit=$(git rev-parse HEAD)"
+          log "parent=$(git rev-parse HEAD^)"
+          log "READY_TO_PUSH"
+
+      - name: Push lockfile branch (only if verification passed)
+        id: push
+        if: steps.gen.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/result.txt"
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          [ "$(git rev-parse --abbrev-ref HEAD)" = "chore/add-package-lock" ] || { echo "FAIL: not on chore/add-package-lock" | tee -a "$R"; exit 1; }
+          EXISTING="$(git ls-remote --heads "$URL" refs/heads/chore/add-package-lock)"
+          [ -z "$EXISTING" ] || { echo "FAIL: chore/add-package-lock already exists on remote" | tee -a "$R"; exit 1; }
+          git push "$URL" refs/heads/chore/add-package-lock:refs/heads/chore/add-package-lock
+          echo "PUSHED chore/add-package-lock $(git rev-parse HEAD)" | tee -a "$R"
+
+      - name: Record result on tmp branch
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          GEN_OUTCOME: ${{ steps.gen.outcome }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+        run: |
+          set -uo pipefail
+          R="$RUNNER_TEMP/result.txt"
+          [ -f "$R" ] || echo "no result file produced" > "$R"
+          echo "gen_outcome=${GEN_OUTCOME} push_outcome=${PUSH_OUTCOME}" >> "$R"
+          URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --depth=1 "$URL" refs/heads/tmp/lockfile-gen || { echo "could not fetch tmp/lockfile-gen; result not recorded"; exit 0; }
+          TIP="$(git rev-parse FETCH_HEAD)"
+          git switch -C result-branch "$TIP" || { echo "could not switch to result-branch; result not recorded"; exit 0; }
+          [ "$(git rev-parse HEAD)" = "$TIP" ] || { echo "HEAD is not the tmp branch tip; result not recorded"; exit 0; }
+          cp "$R" lockfile-gen-result.txt
+          git add lockfile-gen-result.txt
+          git commit -q -m "lockfile-gen result" || { echo "commit failed; result not recorded"; exit 0; }
+          [ "$(git diff --name-only "$TIP" HEAD)" = "lockfile-gen-result.txt" ] || { echo "unexpected files in result commit; not pushing"; exit 0; }
+          git push "$URL" HEAD:refs/heads/tmp/lockfile-gen
+
+      - name: Fail job if anything failed
+        if: always() && (steps.gen.outcome != 'success' || steps.push.outcome != 'success')
+        run: exit 1
