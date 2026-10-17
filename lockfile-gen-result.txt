@@ -1,0 +1,11 @@
+node=v24.21.0 npm=11.19.0
+npm=11.19.0
+base=c462748b01f395add93fba1c0255a2ebcd1d59c1
+package_json_sha256=d20b7ddbce408c1fc593ec15da22639cb092fab7c1b63dbbbc2813dce396d38d
+lock_sha256=af403db3944799021084d05122e68f683eacc26b11dfd82def3db96a439c59ed
+lock_bytes=390051
+commit=cbaddd12ec85d79e1e62dc416c596950f93567a6
+parent=c462748b01f395add93fba1c0255a2ebcd1d59c1
+READY_TO_PUSH
+PUSHED chore/add-package-lock cbaddd12ec85d79e1e62dc416c596950f93567a6
+gen_outcome=success push_outcome=success
