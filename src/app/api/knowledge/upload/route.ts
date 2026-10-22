@@ -17,6 +17,11 @@ import { processDocument } from "@/lib/knowledge/process-document";
 
 export const maxDuration = 60;
 
+// Keep the request body below the serverless function body limit. Multipart
+// framing adds overhead, so the request allowance is slightly larger than the file cap.
+const MAX_UPLOAD_SIZE_BYTES = 4 * 1024 * 1024;
+const MAX_MULTIPART_REQUEST_BYTES = MAX_UPLOAD_SIZE_BYTES + 64 * 1024;
+
 const TYPE_MAP: Record<string, string> = {
   "application/pdf": "pdf",
   "application/msword": "word",
@@ -36,6 +41,17 @@ function resolveSourceType(mimeType: string): string | null {
 }
 
 export async function POST(request: Request) {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const requestSize = Number(contentLength);
+    if (Number.isFinite(requestSize) && requestSize > MAX_MULTIPART_REQUEST_BYTES) {
+      return NextResponse.json(
+        { error: "Upload request is too large. Maximum file size is 4 MiB." },
+        { status: 413 },
+      );
+    }
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -62,6 +78,13 @@ export async function POST(request: Request) {
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 422 });
+  }
+
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+    return NextResponse.json(
+      { error: "File is too large. Maximum file size is 4 MiB." },
+      { status: 413 },
+    );
   }
 
   const sourceType = resolveSourceType(file.type);

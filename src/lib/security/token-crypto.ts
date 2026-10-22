@@ -27,9 +27,11 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "crypto"
 const PREFIX = "enc:v1:";
 const MIN_KEY_LENGTH = 32;
 
-function deriveKey(): Buffer | null {
+function deriveKey(): Buffer {
   const secret = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!secret) return null;
+  if (!secret) {
+    throw new Error("TOKEN_ENCRYPTION_KEY must be configured before storing integration tokens.");
+  }
   if (secret.length < MIN_KEY_LENGTH) {
     throw new Error(
       `TOKEN_ENCRYPTION_KEY is too short: use a random string of at least ${MIN_KEY_LENGTH} characters.`
@@ -49,11 +51,11 @@ export function isEncrypted(stored: string): boolean {
   return stored.startsWith(PREFIX);
 }
 
-// Encrypts a token for storage. Returns the value unchanged (plain text) when
-// no key is configured, or when it is already encrypted.
+// Encrypts a token for storage. Requires a configured key unless the value is
+// already encrypted; missing configuration never falls back to plaintext.
 export function encryptToken(plain: string): string {
+  if (isEncrypted(plain)) return plain;
   const key = deriveKey();
-  if (!key || isEncrypted(plain)) return plain;
 
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -69,9 +71,6 @@ export function decryptToken(stored: string): string {
   if (!isEncrypted(stored)) return stored;
 
   const key = deriveKey();
-  if (!key) {
-    throw new Error("A stored token is encrypted but TOKEN_ENCRYPTION_KEY is not set.");
-  }
 
   const [ivPart, tagPart, dataPart] = stored.slice(PREFIX.length).split(".");
   if (!ivPart || !tagPart || !dataPart) {
