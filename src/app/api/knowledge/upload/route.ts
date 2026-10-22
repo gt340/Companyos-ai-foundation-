@@ -3,6 +3,8 @@ import { after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getActiveOrganizationId } from "@/lib/active-org";
+import { getMembership } from "@/lib/rbac";
+import { canManageKnowledgeBase } from "@/lib/knowledge/authorization";
 import {
   extractFromPdf,
   extractFromWord,
@@ -46,6 +48,12 @@ export async function POST(request: Request) {
   const organizationId = await getActiveOrganizationId(user.id);
   if (!organizationId) {
     return NextResponse.json({ error: "No active organization" }, { status: 400 });
+  }
+
+  // The service-role client bypasses database RLS, so enforce write roles here.
+  const membership = await getMembership(user.id, organizationId);
+  if (!membership || !canManageKnowledgeBase(membership.role.key)) {
+    return NextResponse.json({ error: "You don't have permission to manage knowledge-base documents" }, { status: 403 });
   }
 
   const formData = await request.formData();
