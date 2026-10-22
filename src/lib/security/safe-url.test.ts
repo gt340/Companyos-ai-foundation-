@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { areAllAddressesPublic, isPublicIpAddress, safeRedirectPath, validatePublicHttpUrl } from "./safe-url";
+import {
+  areAllAddressesPublic,
+  isPublicIpAddress,
+  safeRedirectPath,
+  validatePublicHttpUrl,
+} from "./safe-url";
 
 describe("isPublicIpAddress", () => {
   it("accepts representative public IPv4 and IPv6 addresses", () => {
@@ -36,9 +41,20 @@ describe("isPublicIpAddress", () => {
   });
 });
 
+describe("DNS answer policy", () => {
   it("rejects DNS answers containing any private or reserved address", () => {
-    expect(areAllAddressesPublic([{ address: "93.184.216.34" }, { address: "2606:4700:4700::1111" }])).toBe(true);
-    expect(areAllAddressesPublic([{ address: "93.184.216.34" }, { address: "127.0.0.1" }])).toBe(false);
+    expect(
+      areAllAddressesPublic([
+        { address: "93.184.216.34" },
+        { address: "2606:4700:4700::1111" },
+      ]),
+    ).toBe(true);
+    expect(
+      areAllAddressesPublic([
+        { address: "93.184.216.34" },
+        { address: "127.0.0.1" },
+      ]),
+    ).toBe(false);
     expect(areAllAddressesPublic([])).toBe(false);
   });
 });
