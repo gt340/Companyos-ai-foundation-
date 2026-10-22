@@ -125,6 +125,35 @@ describe("fetchPublicUrlText", () => {
     expect(mocks.lookup).toHaveBeenCalledTimes(2);
   });
 
+  it("supports Node lookup calls that request all address candidates", async () => {
+    plans.push({ statusCode: 200, body: "ok" });
+    await expect(fetchPublicUrlText("https://start.example.com")).resolves.toBe("ok");
+
+    const requestOptions = mocks.httpsRequest.mock.calls[0]?.[0] as {
+      lookup: (
+        hostname: string,
+        options: { all?: boolean },
+        callback: (
+          error: Error | null,
+          address: string | Array<{ address: string; family: number }>,
+          family?: number,
+        ) => void,
+      ) => void;
+    };
+
+    const allAddresses = await new Promise<Array<{ address: string; family: number }>>((resolve, reject) => {
+      requestOptions.lookup("start.example.com", { all: true }, (error, address) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(address as Array<{ address: string; family: number }>);
+      });
+    });
+
+    expect(allAddresses).toEqual([{ address: "93.184.216.34", family: 4 }]);
+  });
+
   it("rejects HTTPS-to-HTTP downgrade redirects", async () => {
     plans.push({
       statusCode: 302,
