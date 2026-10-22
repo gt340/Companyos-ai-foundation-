@@ -264,7 +264,7 @@ function requestPinnedUrl(target: ResolvedPublicUrl): Promise<FetchResponse> {
         Accept: "text/html,text/plain,application/xhtml+xml;q=0.9,*/*;q=0.1",
         "Accept-Encoding": "identity",
       },
-      agent: false,
+      agent: false as const,
       lookup: pinnedLookup,
     };
 
