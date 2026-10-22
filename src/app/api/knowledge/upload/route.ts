@@ -19,7 +19,7 @@ export const maxDuration = 60;
 
 // Keep the request body below the serverless function body limit. Multipart
 // framing adds overhead, so the request allowance is slightly larger than the file cap.
-export const MAX_UPLOAD_SIZE_BYTES = 4 * 1024 * 1024;
+const MAX_UPLOAD_SIZE_BYTES = 4 * 1024 * 1024;
 const MAX_MULTIPART_REQUEST_BYTES = MAX_UPLOAD_SIZE_BYTES + 64 * 1024;
 
 const TYPE_MAP: Record<string, string> = {
