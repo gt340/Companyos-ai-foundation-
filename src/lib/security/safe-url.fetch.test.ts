@@ -95,7 +95,7 @@ describe("fetchPublicUrlText", () => {
       headers: { location: "http://127.0.0.1/admin" },
     });
 
-    await expect(fetchPublicUrlText("https://start.example")).rejects.toThrow(
+    await expect(fetchPublicUrlText("https://start.example.com")).rejects.toThrow(
       "Private or reserved IP destinations are not allowed",
     );
     expect(mocks.httpsRequest).toHaveBeenCalledTimes(1);
@@ -108,7 +108,7 @@ describe("fetchPublicUrlText", () => {
       { address: "169.254.169.254", family: 4 },
     ]);
 
-    await expect(fetchPublicUrlText("https://mixed.example")).rejects.toThrow(
+    await expect(fetchPublicUrlText("https://mixed.example.com")).rejects.toThrow(
       "The destination must resolve only to public IP addresses",
     );
     expect(mocks.httpsRequest).not.toHaveBeenCalled();
@@ -116,11 +116,11 @@ describe("fetchPublicUrlText", () => {
 
   it("follows a validated public HTTPS redirect and returns the body", async () => {
     plans.push(
-      { statusCode: 302, headers: { location: "https://next.example/document" } },
+      { statusCode: 302, headers: { location: "https://next.example.com/document" } },
       { statusCode: 200, headers: { "content-length": "2" }, body: "ok" },
     );
 
-    await expect(fetchPublicUrlText("https://start.example")).resolves.toBe("ok");
+    await expect(fetchPublicUrlText("https://start.example.com")).resolves.toBe("ok");
     expect(mocks.httpsRequest).toHaveBeenCalledTimes(2);
     expect(mocks.lookup).toHaveBeenCalledTimes(2);
   });
@@ -128,10 +128,10 @@ describe("fetchPublicUrlText", () => {
   it("rejects HTTPS-to-HTTP downgrade redirects", async () => {
     plans.push({
       statusCode: 302,
-      headers: { location: "http://next.example/document" },
+      headers: { location: "http://next.example.com/document" },
     });
 
-    await expect(fetchPublicUrlText("https://start.example")).rejects.toThrow(
+    await expect(fetchPublicUrlText("https://start.example.com")).rejects.toThrow(
       "HTTPS redirects to HTTP are not allowed",
     );
     expect(mocks.httpRequest).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe("fetchPublicUrlText", () => {
   it("rejects response bodies that exceed the streaming size limit", async () => {
     plans.push({ statusCode: 200, body: Buffer.alloc(1_000_001, 65) });
 
-    await expect(fetchPublicUrlText("https://large.example")).rejects.toThrow(
+    await expect(fetchPublicUrlText("https://large.example.com")).rejects.toThrow(
       "The remote response exceeds the size limit",
     );
   });
@@ -149,7 +149,7 @@ describe("fetchPublicUrlText", () => {
     vi.useFakeTimers();
     plans.push({ statusCode: 200, hang: true });
 
-    const pending = fetchPublicUrlText("https://slow.example");
+    const pending = fetchPublicUrlText("https://slow.example.com");
     for (let i = 0; i < 5; i += 1) await Promise.resolve();
     expect(mocks.httpsRequest).toHaveBeenCalledTimes(1);
 
