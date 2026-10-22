@@ -235,18 +235,16 @@ function requestPinnedUrl(target: ResolvedPublicUrl): Promise<FetchResponse> {
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
     const finish = (response: FetchResponse) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       resolve(response);
     };
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       reject(error instanceof SafeUrlError ? error : new SafeUrlError("Could not fetch the public URL"));
     };
 
@@ -331,7 +329,7 @@ function requestPinnedUrl(target: ResolvedPublicUrl): Promise<FetchResponse> {
           )
         : httpRequest(options, onResponse);
 
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       request.destroy(new SafeUrlError("The URL request timed out"));
     }, REQUEST_TIMEOUT_MS);
 
