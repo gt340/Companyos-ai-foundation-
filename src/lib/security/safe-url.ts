@@ -4,7 +4,8 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 8_000;
+const DNS_TIMEOUT_MS = 4_000;
 const MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -174,6 +175,10 @@ interface ResolvedPublicUrl {
   address: LookupAddress;
 }
 
+export function areAllAddressesPublic(addresses: ReadonlyArray<{ address: string }>): boolean {
+  return addresses.length > 0 && addresses.every(({ address }) => isPublicIpAddress(address));
+}
+
 async function resolvePublicUrl(input: string | URL): Promise<ResolvedPublicUrl> {
   const url = parseAllowedUrl(input.toString());
   const hostname = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
@@ -188,13 +193,25 @@ async function resolvePublicUrl(input: string | URL): Promise<ResolvedPublicUrl>
   }
 
   let addresses: LookupAddress[];
+  let dnsTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    addresses = await dnsLookup(hostname, { all: true, verbatim: true });
-  } catch {
+    addresses = await Promise.race([
+      dnsLookup(hostname, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => {
+        dnsTimer = setTimeout(
+          () => reject(new SafeUrlError("The destination hostname lookup timed out")),
+          DNS_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof SafeUrlError) throw error;
     throw new SafeUrlError("The destination hostname could not be resolved");
+  } finally {
+    if (dnsTimer) clearTimeout(dnsTimer);
   }
 
-  if (addresses.length === 0 || addresses.some(({ address }) => !isPublicIpAddress(address))) {
+  if (!areAllAddressesPublic(addresses)) {
     throw new SafeUrlError("The destination must resolve only to public IP addresses");
   }
 
