@@ -5,6 +5,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { getActiveOrganizationId } from "@/lib/active-org";
 import { extractFromUrl } from "@/lib/knowledge/extract-text";
 import { processDocument } from "@/lib/knowledge/process-document";
+import { validatePublicHttpUrl } from "@/lib/security/safe-url";
 
 export const maxDuration = 60;
 
@@ -25,11 +26,20 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => null);
-  const url = body?.url as string | undefined;
-  const category = (body?.category as string | undefined) ?? "general";
+  const url = typeof body?.url === "string" ? body.url : undefined;
+  const category = (typeof body?.category === "string" ? body.category : undefined) ?? "general";
 
-  if (!url || !/^https?:\/\//.test(url)) {
-    return NextResponse.json({ error: "Enter a valid URL starting with http:// or https://" }, { status: 422 });
+  if (!url) {
+    return NextResponse.json({ error: "Enter a valid public HTTP or HTTPS URL" }, { status: 422 });
+  }
+
+  try {
+    await validatePublicHttpUrl(url);
+  } catch {
+    return NextResponse.json(
+      { error: "Enter a valid public HTTP or HTTPS URL that resolves only to public addresses" },
+      { status: 422 },
+    );
   }
 
   const admin = createAdminClient(

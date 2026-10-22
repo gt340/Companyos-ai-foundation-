@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import { safeRedirectPath } from '@/lib/security/safe-url'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -48,6 +49,6 @@ export async function GET(request: Request) {
   }
 
   // Honor a pending invite redirect if one was passed through, otherwise go to dashboard
-  const finalRedirect = redirectTo ? decodeURIComponent(redirectTo) : '/dashboard'
-  return NextResponse.redirect(`${origin}${finalRedirect}`)
+  const finalRedirect = safeRedirectPath(redirectTo, '/dashboard')
+  return NextResponse.redirect(new URL(finalRedirect, origin))
 }
