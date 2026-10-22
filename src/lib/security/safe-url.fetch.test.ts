@@ -95,7 +95,7 @@ describe("fetchPublicUrlText", () => {
       headers: { location: "http://127.0.0.1/admin" },
     });
 
-    await expect(fetchPublicUrlText("https://start.example.com")).rejects.toThrow(
+    await expect(fetchPublicUrlText("http://start.example.com")).rejects.toThrow(
       "Private or reserved IP destinations are not allowed",
     );
     expect(mocks.httpsRequest).toHaveBeenCalledTimes(1);
@@ -153,7 +153,8 @@ describe("fetchPublicUrlText", () => {
     for (let i = 0; i < 5; i += 1) await Promise.resolve();
     expect(mocks.httpsRequest).toHaveBeenCalledTimes(1);
 
+    const timedOut = expect(pending).rejects.toThrow("The URL request timed out");
     await vi.advanceTimersByTimeAsync(8_001);
-    await expect(pending).rejects.toThrow("The URL request timed out");
+    await timedOut;
   });
 });
