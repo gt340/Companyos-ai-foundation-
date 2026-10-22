@@ -111,8 +111,8 @@ export async function extractFromUrl(url: string): Promise<ExtractResult> {
     const html = await fetchPublicUrlText(url);
     // Strip script/style blocks, then all remaining tags, then collapse whitespace.
     const text = html
-      .replace(/<script>[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/g, " ")
       .replace(/&amp;/g, "&")
