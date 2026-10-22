@@ -2,6 +2,7 @@ import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import OpenAI from "openai";
+import { fetchPublicUrlText, SafeUrlError } from "@/lib/security/safe-url";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
@@ -107,23 +108,22 @@ export async function extractFromAudioOrVideo(file: File): Promise<ExtractResult
 
 export async function extractFromUrl(url: string): Promise<ExtractResult> {
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "CompanyOS-KnowledgeBase/1.0" } });
-    if (!res.ok) return { error: `Couldn't fetch that URL (status ${res.status})` };
-
-    const html = await res.text();
+    const html = await fetchPublicUrlText(url);
     // Strip script/style blocks, then all remaining tags, then collapse whitespace.
     const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\\s\\S]*?<\\/script>/gi, " ")
+      .replace(/<style[\\s\\S]*?<\\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/g, " ")
       .replace(/&amp;/g, "&")
-      .replace(/\s+/g, " ")
+      .replace(/\\s+/g, " ")
       .trim();
 
     return { text };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Failed to fetch URL" };
+    return {
+      error: err instanceof SafeUrlError ? err.message : "Failed to fetch URL",
+    };
   }
 }
 
