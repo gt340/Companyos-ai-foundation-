@@ -7,8 +7,9 @@
 //
 // Server environment variables for the platform's single Zoom OAuth app
 // (a Zoom "General app" with user-managed OAuth, not the Server-to-Server one):
-//   ZOOM_OAUTH_CLIENT_ID
-//   ZOOM_OAUTH_CLIENT_SECRET
+//   ZOOM_CLIENT_ID
+//   ZOOM_CLIENT_SECRET
+// Legacy aliases ZOOM_OAUTH_CLIENT_ID / ZOOM_OAUTH_CLIENT_SECRET remain supported.
 // Redirect URL to register in that Zoom app:
 //   <app url>/api/auth/zoom/callback
 // App scopes needed: meeting:write:meeting, meeting:read:list_meetings,
@@ -41,8 +42,10 @@ export interface ZoomOAuthConfig {
 }
 
 export function getZoomOAuthConfig(): ZoomOAuthConfig | null {
-  const clientId = process.env.ZOOM_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.ZOOM_OAUTH_CLIENT_SECRET;
+  // Prefer the names already configured in Vercel; keep the previous names
+  // as fallbacks so existing deployments and local environments remain compatible.
+  const clientId = process.env.ZOOM_CLIENT_ID || process.env.ZOOM_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.ZOOM_CLIENT_SECRET || process.env.ZOOM_OAUTH_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
   return {
     clientId,
@@ -114,7 +117,7 @@ export async function getOrgZoomAccessToken(
   const config = getZoomOAuthConfig();
   if (!config) {
     throw new Error(
-      "Zoom sign-in is not configured on the server (ZOOM_OAUTH_CLIENT_ID / ZOOM_OAUTH_CLIENT_SECRET), so the company's Zoom token could not be refreshed."
+      "Zoom sign-in is not configured on the server (ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET), so the company's Zoom token could not be refreshed."
     );
   }
 
