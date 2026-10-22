@@ -248,7 +248,16 @@ function requestPinnedUrl(target: ResolvedPublicUrl): Promise<FetchResponse> {
       reject(error instanceof SafeUrlError ? error : new SafeUrlError("Could not fetch the public URL"));
     };
 
-    const pinnedLookup = ((_: string, _options: unknown, callback: (...args: unknown[]) => void) => {
+    const pinnedLookup = ((_: string, lookupOptions: unknown, callback: (...args: unknown[]) => void) => {
+      if (
+        typeof lookupOptions === "object" &&
+        lookupOptions !== null &&
+        "all" in lookupOptions &&
+        lookupOptions.all === true
+      ) {
+        callback(null, [{ address: address.address, family: address.family }]);
+        return;
+      }
       callback(null, address.address, address.family);
     }) as unknown as LookupFunction;
 
