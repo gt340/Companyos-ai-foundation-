@@ -109,6 +109,7 @@ function isPublicIpv6(address: string): boolean {
   // 6to4, and documentation space.
   if (first < 0x2000 || first > 0x3fff) return false;
   if (first === 0x2001 && second <= 0x01ff) return false;
+  if (first === 0x2001 && second === 0x0db8) return false;
   if (first === 0x2002) return false;
   if (first === 0x3fff) return false;
 
