@@ -98,8 +98,8 @@ describe("fetchPublicUrlText", () => {
     await expect(fetchPublicUrlText("http://start.example.com")).rejects.toThrow(
       "Private or reserved IP destinations are not allowed",
     );
-    expect(mocks.httpsRequest).toHaveBeenCalledTimes(1);
-    expect(mocks.httpRequest).not.toHaveBeenCalled();
+    expect(mocks.httpRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.httpsRequest).not.toHaveBeenCalled();
   });
 
   it("blocks DNS rebinding or mixed DNS answers before opening a connection", async () => {
