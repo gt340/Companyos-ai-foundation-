@@ -51,8 +51,8 @@ export function isEncrypted(stored: string): boolean {
   return stored.startsWith(PREFIX);
 }
 
-// Encrypts a token for storage. Returns the value unchanged (plain text) when
-// no key is configured, or when it is already encrypted.
+// Encrypts a token for storage. Requires a configured key unless the value is
+// already encrypted; missing configuration never falls back to plaintext.
 export function encryptToken(plain: string): string {
   if (isEncrypted(plain)) return plain;
   const key = deriveKey();
