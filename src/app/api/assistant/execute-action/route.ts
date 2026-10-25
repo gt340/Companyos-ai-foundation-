@@ -101,4 +101,3 @@ export async function POST(req: Request) {
       { status: isPermissionError ? 403 : 500 }
     );
   }
-      }
