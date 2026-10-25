@@ -125,7 +125,7 @@ export async function POST(req: Request) {
 
     await prisma.approvalRequest.updateMany({
       where: { id: proposed.id, organizationId: ctx.organizationId, status: "APPROVED" },
-      data: { status: "EXECUTED", result: result as object },
+      data: { status: "EXECUTED", result: result === undefined ? null : JSON.parse(JSON.stringify(result)) },
     });
 
     await prisma.activityLog.create({
