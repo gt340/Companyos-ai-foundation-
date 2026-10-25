@@ -28,6 +28,7 @@ interface ChatMessage {
 interface PendingAction {
   tool: string;
   arguments: Record<string, unknown>;
+  approvalToken: string;
 }
 
 type PendingAttachment =
