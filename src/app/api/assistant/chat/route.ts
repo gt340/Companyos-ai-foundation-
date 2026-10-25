@@ -10,6 +10,7 @@ import {
   buildExecutorContext,
   executeTool,
 } from "@/lib/assistant/tool-executors";
+import { createActionApprovalToken } from "@/lib/assistant/action-approval";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -190,6 +191,12 @@ export async function POST(req: Request) {
                 type: "action_proposal",
                 tool: mutatingCall.name,
                 arguments: parsedArgs,
+                approvalToken: createActionApprovalToken({
+                  userId: ctx.userId,
+                  organizationId: ctx.organizationId,
+                  tool: mutatingCall.name,
+                  args: parsedArgs,
+                }),
               })
             );
             controller.enqueue(encodeEvent({ type: "done" }));
