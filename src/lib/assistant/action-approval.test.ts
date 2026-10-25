@@ -9,10 +9,12 @@ describe("assistant action approval tokens", () => {
       organizationId: "org-1",
       tool: "update_profile",
       args: { name: "Approved Name" },
+      approvalRequestId: "approval-1",
     };
     const token = createActionApprovalToken(input);
     expect(verifyActionApprovalToken({ token, ...input }).valid).toBe(true);
     expect(verifyActionApprovalToken({ token, ...input, userId: "other-user" }).valid).toBe(false);
     expect(verifyActionApprovalToken({ token, ...input, args: { name: "Different" } }).valid).toBe(false);
+    expect(verifyActionApprovalToken({ token, ...input, approvalRequestId: "approval-2" }).approvalRequestId).toBe("approval-1");
   });
 });
