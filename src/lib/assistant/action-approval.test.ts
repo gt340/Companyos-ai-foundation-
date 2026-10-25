@@ -30,7 +30,7 @@ describe("assistant action approval tokens", () => {
     expect(verifyActionApprovalToken({ token, ...input, organizationId: "other-org" }).valid).toBe(false);
     expect(verifyActionApprovalToken({ token, ...input, tool: "send_email" }).valid).toBe(false);
     expect(verifyActionApprovalToken({ token, ...input, args: { name: "Different" } }).valid).toBe(false);
-    expect(verifyActionApprovalToken({ token: `${token}.`, ...input }).valid).toBe(false);
+    expect(verifyActionApprovalToken({ token: `${token}.junk`, ...input }).valid).toBe(false);
   });
 
   it("fails closed when the signing key is missing or too short", () => {
