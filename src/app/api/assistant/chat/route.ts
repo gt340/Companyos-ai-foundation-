@@ -1,6 +1,7 @@
 // src/app/api/assistant/chat/route.ts
 
 import OpenAI from "openai";
+import { prisma } from "@/lib/prisma";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import {
   ALL_TOOL_DEFINITIONS,
@@ -186,6 +187,17 @@ export async function POST(req: Request) {
             } catch {
               // leave as empty object if the model produced malformed JSON
             }
+            const approvalRequest = await prisma.approvalRequest.create({
+              data: {
+                organizationId: ctx.organizationId,
+                agentId: ctx.agentId,
+                actionType: mutatingCall.name,
+                proposedAction: { tool: mutatingCall.name, arguments: parsedArgs },
+                status: "PENDING_APPROVAL",
+                requestedBy: ctx.userId,
+              },
+              select: { id: true },
+            });
             controller.enqueue(
               encodeEvent({
                 type: "action_proposal",
@@ -196,6 +208,7 @@ export async function POST(req: Request) {
                   organizationId: ctx.organizationId,
                   tool: mutatingCall.name,
                   args: parsedArgs,
+                  approvalRequestId: approvalRequest.id,
                 }),
               })
             );
