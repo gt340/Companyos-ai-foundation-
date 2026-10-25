@@ -7,6 +7,7 @@ type ApprovalClaims = {
   args: unknown;
   exp: number;
   jti: string;
+  approvalRequestId: string;
 };
 
 function stable(value: unknown): string {
@@ -35,6 +36,7 @@ export function createActionApprovalToken(input: {
   organizationId: string;
   tool: string;
   args: unknown;
+  approvalRequestId: string;
 }): string {
   const claims: ApprovalClaims = {
     sub: input.userId,
@@ -43,6 +45,7 @@ export function createActionApprovalToken(input: {
     args: input.args,
     exp: Math.floor(Date.now() / 1000) + 5 * 60,
     jti: randomUUID(),
+    approvalRequestId: input.approvalRequestId,
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${sign(payload)}`;
@@ -55,7 +58,7 @@ export function verifyActionApprovalToken(input: {
   organizationId: string;
   tool: string;
   args: unknown;
-}): { valid: boolean; jti?: string } {
+}): { valid: boolean; jti?: string; approvalRequestId?: string } {
   try {
     if (typeof input.token !== "string") return { valid: false };
     const [payload, suppliedSignature, extra] = input.token.split(".");
@@ -73,7 +76,9 @@ export function verifyActionApprovalToken(input: {
       claims.org === input.organizationId &&
       claims.tool === input.tool &&
       stable(claims.args) === stable(input.args);
-    return valid ? { valid: true, jti: claims.jti } : { valid: false };
+    return valid && typeof claims.jti === "string" && typeof claims.approvalRequestId === "string"
+      ? { valid: true, jti: claims.jti, approvalRequestId: claims.approvalRequestId }
+      : { valid: false };
   } catch {
     return { valid: false };
   }
