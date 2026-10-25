@@ -209,8 +209,8 @@ export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "remember_ceo_insight",
     description:
-      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term — including useful findings from a web search the founder wants kept. Does not change core company data, so it runs immediately without requiring confirmation.",
-    mutating: false,
+      "Save something important to the CEO Agent's persistent memory so it can be recalled in future conversations and used in reports. Use for company facts, strategic goals, founder preferences, decisions, business events, or insights the founder wants remembered long-term — including useful findings from a web search the founder wants kept. This persists company data and requires confirmation.",
+    mutating: true,
     parameters: {
       type: "object",
       properties: {
