@@ -3,6 +3,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { MUTATING_TOOL_NAMES } from "@/lib/assistant/tools";
+import { verifyActionApprovalToken } from "@/lib/assistant/action-approval";
 import {
   buildExecutorContext,
   executeTool,
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const tool = body?.tool as string | undefined;
   const args = body?.arguments ?? {};
+  const approvalToken = body?.approvalToken;
 
   if (!tool) {
     return NextResponse.json(
@@ -44,7 +46,39 @@ export async function POST(req: Request) {
     );
   }
 
+  const approval = verifyActionApprovalToken({
+    token: approvalToken,
+    userId: ctx.userId,
+    organizationId: ctx.organizationId,
+    tool,
+    args,
+  });
+  if (!approval.valid) {
+    return NextResponse.json(
+      { success: false, error: "Action approval is missing, expired, or does not match this exact action. Ask the assistant to propose it again." },
+      { status: 403 }
+    );
+  }
+
   try {
+    // Best-effort replay guard: refuse a token already recorded in the audit log.
+    // The action token is also short-lived and bound to the exact user/org/tool/arguments.
+    const priorUse = await prisma.activityLog.findFirst({
+      where: {
+        organizationId: ctx.organizationId,
+        actorId: ctx.userId,
+        action: `assistant.${tool}`,
+        metadata: { path: ["approvalTokenId"], equals: approval.jti },
+      },
+      select: { id: true },
+    });
+    if (priorUse) {
+      return NextResponse.json(
+        { success: false, error: "This approval has already been used. Ask the assistant to propose the action again." },
+        { status: 409 }
+      );
+    }
+
     const result = await executeTool(tool, args, ctx);
 
     // Audit trail: record that the assistant performed this action.
@@ -54,7 +88,7 @@ export async function POST(req: Request) {
         actorId: ctx.userId,
         category: "SYSTEM",
         action: `assistant.${tool}`,
-        metadata: { arguments: args },
+        metadata: { arguments: args, approvalTokenId: approval.jti },
       },
     });
 
