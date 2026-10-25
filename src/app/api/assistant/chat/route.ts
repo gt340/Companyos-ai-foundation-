@@ -1,6 +1,7 @@
 // src/app/api/assistant/chat/route.ts
 
 import OpenAI from "openai";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import {
@@ -192,7 +193,7 @@ export async function POST(req: Request) {
                 organizationId: ctx.organizationId,
                 agentId: ctx.agentId,
                 actionType: mutatingCall.name,
-                proposedAction: { tool: mutatingCall.name, arguments: parsedArgs },
+                proposedAction: { tool: mutatingCall.name, arguments: parsedArgs as Prisma.InputJsonValue },
                 status: "PENDING_APPROVAL",
                 requestedBy: ctx.userId,
               },
