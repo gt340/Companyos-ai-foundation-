@@ -61,8 +61,10 @@ export function verifyActionApprovalToken(input: {
 }): { valid: boolean; jti?: string; approvalRequestId?: string } {
   try {
     if (typeof input.token !== "string") return { valid: false };
-    const [payload, suppliedSignature, extra] = input.token.split(".");
-    if (!payload || !suppliedSignature || extra) return { valid: false };
+    const parts = input.token.split(".");
+    if (parts.length !== 2) return { valid: false };
+    const [payload, suppliedSignature] = parts;
+    if (!payload || !suppliedSignature) return { valid: false };
     const expected = Buffer.from(sign(payload));
     const supplied = Buffer.from(suppliedSignature);
     if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
