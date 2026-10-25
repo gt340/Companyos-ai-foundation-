@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 
 type ApprovalClaims = {
   sub: string;
@@ -42,15 +42,12 @@ export function createActionApprovalToken(input: {
     tool: input.tool,
     args: input.args,
     exp: Math.floor(Date.now() / 1000) + 5 * 60,
-    jti: cryptoRandomId(),
+    jti: randomUUID(),
   };
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${sign(payload)}`;
 }
 
-function cryptoRandomId(): string {
-  return require("crypto").randomUUID();
-}
 
 export function verifyActionApprovalToken(input: {
   token: unknown;
