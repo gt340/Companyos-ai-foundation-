@@ -28,6 +28,7 @@ interface ChatMessage {
 interface PendingAction {
   tool: string;
   arguments: Record<string, unknown>;
+  approvalToken: string;
 }
 
 type PendingAttachment =
@@ -601,7 +602,11 @@ export default function AssistantPage() {
               setStatusLine(`Couldn't complete ${formatToolLabel(event.name)}`);
               break;
             case "action_proposal":
-              setPendingAction({ tool: event.tool, arguments: event.arguments });
+              setPendingAction({
+                tool: event.tool,
+                arguments: event.arguments,
+                approvalToken: event.approvalToken,
+              });
               break;
             case "error":
               assistantText +=
