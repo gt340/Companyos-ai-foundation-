@@ -13,8 +13,9 @@ describe("assistant action approval tokens", () => {
     };
     const token = createActionApprovalToken(input);
     expect(verifyActionApprovalToken({ token, ...input }).valid).toBe(true);
+    expect(verifyActionApprovalToken({ token, ...input }).approvalRequestId).toBe("approval-1");
     expect(verifyActionApprovalToken({ token, ...input, userId: "other-user" }).valid).toBe(false);
     expect(verifyActionApprovalToken({ token, ...input, args: { name: "Different" } }).valid).toBe(false);
-    expect(verifyActionApprovalToken({ token, ...input, approvalRequestId: "approval-2" }).approvalRequestId).toBe("approval-1");
+    
   });
 });
